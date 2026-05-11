@@ -1,0 +1,1335 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>منصة المهام</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Cairo',sans-serif;}
+*{-webkit-tap-highlight-color:transparent;}
+input,select,textarea,button{font-family:inherit;}
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-thumb{border-radius:3px;}
+.spin{animation:spin 1s linear infinite;}
+@keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
+.kanban{display:flex;gap:12px;overflow-x:auto;padding-bottom:8px;}
+.kanban::-webkit-scrollbar{height:4px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useMemo,useCallback}=React;
+
+// ─── CONFIG — بدل هذين بمفاتيح Supabase الجديد ────────────
+const SB_URL='YOUR_SUPABASE_URL';
+const SB_KEY='YOUR_SUPABASE_KEY';
+const ADMIN_EMAIL='admin@agency.com'; // بدل بإيميلك
+
+// ─── THEME ────────────────────────────────────────────────
+let _theme=localStorage.getItem('_t')||'dark';
+const DARK={bg:'#0f0f0f',card:'#1a1a1a',card2:'#222',border:'#2a2a2a',accent:'#b04a2f',soft:'rgba(176,74,47,0.15)',text:'#f0f0f0',muted:'#777',success:'#22c55e',warning:'#f59e0b',danger:'#ef4444',info:'#3b82f6',inputBg:'#111'};
+const LIGHT={bg:'#f4f4f5',card:'#ffffff',card2:'#f9f9f9',border:'#e4e4e7',accent:'#b04a2f',soft:'rgba(176,74,47,0.08)',text:'#18181b',muted:'#71717a',success:'#16a34a',warning:'#d97706',danger:'#dc2626',info:'#2563eb',inputBg:'#f9fafb'};
+const B=_theme==='dark'?DARK:LIGHT;
+document.body.style.background=B.bg;
+document.body.style.color=B.text;
+const _ss=document.createElement('style');
+_ss.textContent=`::-webkit-scrollbar-thumb{background:${B.border};}::-webkit-scrollbar-track{background:${B.bg};}`;
+document.head.appendChild(_ss);
+function toggleTheme(){localStorage.setItem('_t',_theme==='dark'?'light':'dark');window.location.reload();}
+
+// ─── HELPERS ──────────────────────────────────────────────
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const hash=s=>{let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return'h'+Math.abs(h).toString(36)+'_'+s.length;};
+const fmtDate=iso=>iso?new Date(iso).toLocaleDateString('ar-DZ',{day:'numeric',month:'short'}):'';
+const isOverdue=d=>d&&new Date(d)<new Date()&&new Date(d).toDateString()!==new Date().toDateString();
+const isToday=d=>d&&new Date(d).toDateString()===new Date().toDateString();
+const EMPTY={adminPassword:null,members:[],clients:[],tasks:[],comments:[]};
+
+const STAGES=[
+  {id:'script',label:'سكريبت',icon:'📝',color:'#534ab7'},
+  {id:'shoot',label:'تصوير',icon:'📷',color:'#185fa5'},
+  {id:'edit',label:'مونتاج',icon:'🎬',color:'#b04a2f'},
+  {id:'review',label:'مراجعة',icon:'👁',color:'#d97706'},
+  {id:'done',label:'تسليم',icon:'✅',color:'#16a34a'},
+];
+const CONTENT_TYPES=[
+  {id:'reel',label:'ريلز',icon:'🎥'},
+  {id:'post',label:'بوست',icon:'🖼'},
+  {id:'story',label:'ستوري',icon:'⭕'},
+  {id:'carousel',label:'كاروسيل',icon:'📱'},
+  {id:'video',label:'فيديو',icon:'🎞'},
+  {id:'other',label:'أخرى',icon:'📦'},
+];
+const MEMBER_ROLES=[
+  {id:'editor',label:'إيديتور'},
+  {id:'photographer',label:'مصور'},
+  {id:'scriptwriter',label:'كاتب سكريبت'},
+  {id:'designer',label:'مصمم'},
+  {id:'manager',label:'مدير'},
+  {id:'other',label:'أخرى'},
+];
+const PRIORITIES=[
+  {id:'low',label:'عادية',color:B.muted},
+  {id:'normal',label:'متوسطة',color:B.info},
+  {id:'high',label:'عالية',color:B.warning},
+  {id:'urgent',label:'عاجلة',color:B.danger},
+];
+const COLORS=['#b04a2f','#185fa5','#534ab7','#16a34a','#d97706','#ec4899','#0891b2','#7c3aed'];
+
+// ─── SUPABASE ─────────────────────────────────────────────
+const sb=supabase.createClient(SB_URL,SB_KEY);
+const DB={
+  async load(){
+    try{
+      const{data,error}=await sb.from('agency_pm').select('data').eq('id','main').single();
+      if(error)return{...EMPTY};
+      return data?.data||{...EMPTY};
+    }catch(e){return{...EMPTY};}
+  },
+  async save(data){
+    try{
+      const{data:u,error}=await sb.from('agency_pm').update({data,updated_at:new Date().toISOString()}).eq('id','main').select();
+      if(error)throw error;
+      if(!u||u.length===0)await sb.from('agency_pm').insert({id:'main',data});
+    }catch(e){console.error('Save error:',e);}
+  }
+};
+
+// ─── UI PRIMITIVES ────────────────────────────────────────
+const INP={width:'100%',padding:'0.7rem 0.875rem',background:B.inputBg,border:`1px solid ${B.border}`,borderRadius:'0.75rem',outline:'none',fontSize:'0.875rem',color:B.text};
+
+function Ic({n,size=18,color=B.muted}){
+  const icons={
+    lock:'<path d="M7 11V7a5 5 0 0 1 10 0v4"/><rect x="3" y="11" width="18" height="11" rx="2"/>',
+    eye:'<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+    eyeoff:'<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
+    x:'<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+    plus:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    pencil:'<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
+    check:'<polyline points="20 6 9 11 4 16"/>',
+    logout:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
+    users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
+    user:'<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    shield:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+    building:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>',
+    layout:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>',
+    chart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    calendar:'<rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+    clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    message:'<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 0 2 2z"/>',
+    alert:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    loader:'<line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/>',
+    sun:'<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+    moon:'<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+    chevronLeft:'<polyline points="15 18 9 12 15 6"/>',
+    chevronRight:'<polyline points="9 18 15 12 9 6"/>',
+    send:'<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+    kanban:'<rect x="3" y="3" width="5" height="18"/><rect x="10" y="3" width="5" height="12"/><rect x="17" y="3" width="5" height="8"/>',
+  };
+  return(
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      dangerouslySetInnerHTML={{__html:icons[n]||''}}/>
+  );
+}
+
+function Avatar({name,color,size=32,fontSize=12}){
+  const initials=name?.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()||'?';
+  return(
+    <div style={{width:size,height:size,borderRadius:'50%',background:color||B.accent,display:'grid',placeItems:'center',fontSize,fontWeight:'700',color:'white',flexShrink:0}}>
+      {initials}
+    </div>
+  );
+}
+
+function Badge({label,color,bg}){
+  return <span style={{fontSize:'0.65rem',fontWeight:'700',padding:'2px 7px',borderRadius:'9999px',background:bg||`${color}22`,color:color||B.muted,whiteSpace:'nowrap'}}>{label}</span>;
+}
+
+function Field({label,children}){
+  return(
+    <div>
+      <label style={{display:'block',fontSize:'0.75rem',fontWeight:'700',color:B.muted,marginBottom:'0.375rem'}}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Modal({onClose,title,width='28rem',children}){
+  return(
+    <div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.6)',backdropFilter:'blur(4px)',zIndex:50,display:'flex',alignItems:'flex-end',justifyContent:'center'}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:B.card,border:`1px solid ${B.border}`,width:'100%',maxWidth:width,borderRadius:'1.5rem 1.5rem 0 0',padding:'1.5rem',maxHeight:'90vh',overflowY:'auto'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:'1.25rem'}}>
+          <h3 style={{fontSize:'1.1rem',fontWeight:'800',color:B.text}}>{title}</h3>
+          <button onClick={onClose} style={{background:'none',border:'none',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="x" size={18}/></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Toast({toast}){
+  if(!toast)return null;
+  return(
+    <div style={{position:'fixed',bottom:'1.5rem',left:'50%',transform:'translateX(-50%)',padding:'0.75rem 1.25rem',borderRadius:'9999px',color:'white',fontWeight:'700',fontSize:'0.875rem',zIndex:100,background:toast.type==='error'?B.danger:toast.type==='warning'?B.warning:B.accent,whiteSpace:'nowrap',maxWidth:'90vw',textAlign:'center'}}>
+      {toast.msg}
+    </div>
+  );
+}
+
+function PwField({value,onChange,placeholder,onEnter}){
+  const[show,setShow]=useState(false);
+  return(
+    <div style={{position:'relative'}}>
+      <input type={show?'text':'password'} value={value} onChange={e=>onChange(e.target.value)}
+        onKeyDown={e=>e.key==='Enter'&&onEnter&&onEnter()} placeholder={placeholder}
+        style={{...INP,paddingRight:'2.5rem'}}/>
+      <button type="button" onClick={()=>setShow(!show)} style={{position:'absolute',left:'0.75rem',top:'50%',transform:'translateY(-50%)',background:'none',border:'none',cursor:'pointer',display:'flex'}}>
+        <Ic n={show?'eyeoff':'eye'} size={15}/>
+      </button>
+    </div>
+  );
+}
+
+// ─── AUTH ─────────────────────────────────────────────────
+function Setup({onSetup}){
+  const[pw,setPw]=useState('');const[pw2,setPw2]=useState('');const[err,setErr]=useState('');
+  const go=()=>{
+    if(pw.length<4)return setErr('كلمة السر لازم تكون 4 حروف على الأقل');
+    if(pw!==pw2)return setErr('كلمة السر ما تتطابقاش');
+    onSetup(pw);
+  };
+  return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:B.bg,padding:'1.5rem'}}>
+      <div style={{width:'100%',maxWidth:'22rem'}}>
+        <div style={{textAlign:'center',marginBottom:'2rem'}}>
+          <div style={{width:60,height:60,background:B.accent,borderRadius:'16px',display:'grid',placeItems:'center',margin:'0 auto 1rem'}}>
+            <Ic n="kanban" size={28} color="white"/>
+          </div>
+          <h1 style={{fontSize:'1.5rem',fontWeight:'900',color:B.text}}>منصة المهام</h1>
+          <p style={{fontSize:'0.875rem',color:B.muted,marginTop:'0.25rem'}}>إعداد أولي — أنشئ كلمة سر الأدمين</p>
+        </div>
+        <div style={{background:B.card,borderRadius:'1.5rem',border:`1px solid ${B.border}`,padding:'1.75rem',display:'flex',flexDirection:'column',gap:'1rem'}}>
+          <Field label="كلمة السر"><PwField value={pw} onChange={setPw} placeholder="4 حروف على الأقل"/></Field>
+          <Field label="أكد كلمة السر"><PwField value={pw2} onChange={setPw2} placeholder="أعد كلمة السر" onEnter={go}/></Field>
+          {err&&<div style={{fontSize:'0.75rem',color:B.danger,fontWeight:'700'}}>{err}</div>}
+          <button onClick={go} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>ابدا</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Login({data,onLogin}){
+  const[role,setRole]=useState('admin');
+  const[memberId,setMemberId]=useState(data.members[0]?.id||'');
+  const[pw,setPw]=useState('');const[err,setErr]=useState('');const[loading,setLoading]=useState(false);
+  const go=async()=>{
+    setErr('');setLoading(true);
+    try{
+      if(role==='admin'){
+        if(hash(pw)===data.adminPassword)onLogin({role:'admin'});
+        else setErr('كلمة السر غالطة');
+      } else {
+        const m=data.members.find(x=>x.id===memberId);
+        if(!m)return setErr('اختار عضو');
+        if(!m.password)return setErr('هذا العضو ما عندوش كلمة سر');
+        if(hash(pw)===m.password)onLogin({role:'member',memberId});
+        else setErr('كلمة السر غالطة');
+      }
+    }finally{setLoading(false);}
+  };
+  return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:B.bg,padding:'1.5rem',position:'relative'}}>
+      <button onClick={toggleTheme} style={{position:'fixed',top:'1rem',left:'1rem',background:B.card,border:`1px solid ${B.border}`,borderRadius:'9999px',padding:'0.375rem 0.625rem',cursor:'pointer',display:'flex',alignItems:'center',color:B.muted}}>
+        <Ic n={_theme==='dark'?'sun':'moon'} size={15}/>
+      </button>
+      <div style={{width:'100%',maxWidth:'22rem'}}>
+        <div style={{textAlign:'center',marginBottom:'2rem'}}>
+          <div style={{width:60,height:60,background:B.accent,borderRadius:'16px',display:'grid',placeItems:'center',margin:'0 auto 1rem',boxShadow:`0 8px 24px ${B.accent}44`}}>
+            <Ic n="kanban" size={28} color="white"/>
+          </div>
+          <h1 style={{fontSize:'1.5rem',fontWeight:'900',color:B.text}}>منصة المهام</h1>
+          <p style={{fontSize:'0.875rem',color:B.muted,marginTop:'0.25rem'}}>تابع المهام والمشاريع</p>
+        </div>
+        <div style={{background:B.card,borderRadius:'1.5rem',border:`1px solid ${B.border}`,padding:'1.75rem',display:'flex',flexDirection:'column',gap:'1rem'}}>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.375rem',padding:'0.25rem',background:B.inputBg,borderRadius:'0.75rem'}}>
+            {[{v:'admin',l:'أدمين',ic:'shield'},{v:'member',l:'عضو',ic:'user'}].map(r=>(
+              <button key={r.v} onClick={()=>{setRole(r.v);setErr('');setPw('');}}
+                style={{padding:'0.5rem',borderRadius:'0.5rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.875rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.4rem',background:role===r.v?B.accent:'transparent',color:role===r.v?'white':B.muted,transition:'all 0.15s'}}>
+                <Ic n={r.ic} size={14} color={role===r.v?'white':B.muted}/>{r.l}
+              </button>
+            ))}
+          </div>
+          {role==='member'&&(
+            data.members.length===0
+              ?<div style={{fontSize:'0.8rem',color:B.warning,padding:'0.5rem 0.75rem',background:`${B.warning}15`,borderRadius:'0.5rem'}}>ما كاينش أعضاء بعد — الأدمين لازم يزيدك أول</div>
+              :<Field label="اسمك">
+                <select value={memberId} onChange={e=>setMemberId(e.target.value)} style={INP}>
+                  <option value="">— اختار —</option>
+                  {data.members.map(m=><option key={m.id} value={m.id}>{m.name} ({MEMBER_ROLES.find(r=>r.id===m.role)?.label||m.role})</option>)}
+                </select>
+              </Field>
+          )}
+          <Field label="كلمة السر"><PwField value={pw} onChange={setPw} placeholder="كلمة السر" onEnter={go}/></Field>
+          {err&&<div style={{fontSize:'0.75rem',color:B.danger,fontWeight:'700',padding:'0.4rem 0.75rem',background:`${B.danger}15`,borderRadius:'0.5rem'}}>{err}</div>}
+          <button onClick={go} disabled={loading} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:'0.5rem',opacity:loading?0.7:1}}>
+            {loading?<span className="spin" style={{display:'inline-block'}}><Ic n="loader" size={16} color="white"/></span>:null}
+            دخول
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── MAIN APP ─────────────────────────────────────────────
+function App(){
+  const[data,setData]=useState(EMPTY);
+  const[loading,setLoading]=useState(true);
+  const[session,setSession]=useState(null);
+  const[toast,setToast]=useState(null);
+
+  useEffect(()=>{
+    DB.load().then(d=>{setData(d);setLoading(false);});
+    const s=localStorage.getItem('_session');
+    if(s){try{setSession(JSON.parse(s));}catch(e){}}
+  },[]);
+
+  const persist=useCallback(async next=>{
+    setData(next);
+    await DB.save(next);
+  },[]);
+
+  const showToast=(msg,type='success')=>{setToast({msg,type});setTimeout(()=>setToast(null),3000);};
+
+  const logout=()=>{localStorage.removeItem('_session');setSession(null);};
+
+  if(loading)return(
+    <div style={{minHeight:'100vh',display:'flex',alignItems:'center',justifyContent:'center',background:B.bg}}>
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:'1rem'}}>
+        <div style={{width:60,height:60,background:B.accent,borderRadius:'16px',display:'grid',placeItems:'center'}}>
+          <Ic n="kanban" size={28} color="white"/>
+        </div>
+        <div style={{color:B.muted,fontSize:'0.875rem'}}>جاري التحميل...</div>
+      </div>
+    </div>
+  );
+
+  if(!data.adminPassword){
+    return <Setup onSetup={pw=>{
+      const next={...data,adminPassword:hash(pw)};
+      persist(next);
+      const s={role:'admin'};
+      setSession(s);localStorage.setItem('_session',JSON.stringify(s));
+    }}/>;
+  }
+
+  if(!session){
+    return <Login data={data} onLogin={s=>{setSession(s);localStorage.setItem('_session',JSON.stringify(s));}}/>;
+  }
+
+  const me=session.role==='member'?data.members.find(m=>m.id===session.memberId):null;
+
+  return(
+    <div style={{minHeight:'100vh',background:B.bg}}>
+      {session.role==='admin'
+        ?<AdminApp data={data} persist={persist} showToast={showToast} logout={logout}/>
+        :<MemberApp data={data} persist={persist} showToast={showToast} logout={logout} me={me}/>
+      }
+      <Toast toast={toast}/>
+    </div>
+  );
+}
+
+// ─── HEADER ───────────────────────────────────────────────
+function Header({title,subtitle,right,onBack}){
+  return(
+    <div style={{background:_theme==='dark'?'rgba(26,26,26,0.92)':'rgba(255,255,255,0.92)',borderBottom:`1px solid ${B.border}`,backdropFilter:'blur(8px)',position:'sticky',top:0,zIndex:30,padding:'0 1rem'}}>
+      <div style={{maxWidth:'80rem',margin:'0 auto',display:'flex',alignItems:'center',justifyContent:'space-between',height:'56px',gap:'0.75rem'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'0.75rem',minWidth:0}}>
+          {onBack&&<button onClick={onBack} style={{background:'none',border:'none',cursor:'pointer',display:'flex',color:B.muted,padding:'0.25rem'}}><Ic n="chevronRight" size={20}/></button>}
+          {!onBack&&<div style={{width:34,height:34,background:B.accent,borderRadius:'10px',display:'grid',placeItems:'center',flexShrink:0}}><Ic n="kanban" size={18} color="white"/></div>}
+          <div style={{minWidth:0}}>
+            <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{title}</div>
+            {subtitle&&<div style={{fontSize:'0.7rem',color:B.muted}}>{subtitle}</div>}
+          </div>
+        </div>
+        <div style={{display:'flex',alignItems:'center',gap:'0.5rem',flexShrink:0}}>
+          {right}
+          <button onClick={toggleTheme} style={{background:'none',border:`1px solid ${B.border}`,borderRadius:'9999px',padding:'0.3rem 0.5rem',cursor:'pointer',display:'flex',color:B.muted}}>
+            <Ic n={_theme==='dark'?'sun':'moon'} size={14}/>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN APP ────────────────────────────────────────────
+function AdminApp({data,persist,showToast,logout}){
+  const[tab,setTab]=useState('dash');
+  const[selectedClient,setSelectedClient]=useState(null);
+
+  const addMember=(name,role,pw,color)=>{
+    persist({...data,members:[...data.members,{id:uid(),name,role,password:hash(pw),color}]});
+    showToast('تم إضافة العضو ✅');
+  };
+  const updMember=(id,patch)=>persist({...data,members:data.members.map(m=>m.id===id?{...m,...patch}:m)});
+  const delMember=id=>{if(!confirm('متأكد؟'))return;persist({...data,members:data.members.filter(m=>m.id!==id),tasks:data.tasks.map(t=>({...t,assignees:(t.assignees||[]).filter(a=>a!==id)}))});showToast('تم الحذف');};
+
+  const addClient=(name,color)=>{
+    persist({...data,clients:[...data.clients,{id:uid(),name,color}]});
+    showToast('تم إضافة الزبون ✅');
+  };
+  const updClient=(id,patch)=>persist({...data,clients:data.clients.map(c=>c.id===id?{...c,...patch}:c)});
+  const delClient=id=>{if(!confirm('متأكد؟ غادي يتحذف كل المهام تاع هذا الزبون'))return;persist({...data,clients:data.clients.filter(c=>c.id!==id),tasks:data.tasks.filter(t=>t.clientId!==id)});setSelectedClient(null);showToast('تم الحذف');};
+
+  const addTask=task=>{persist({...data,tasks:[{id:uid(),...task,createdAt:new Date().toISOString()},...data.tasks]});showToast('تم إضافة المهمة ✅');};
+  const updTask=(id,patch)=>persist({...data,tasks:data.tasks.map(t=>t.id===id?{...t,...patch}:t)});
+  const delTask=id=>{if(!confirm('متأكد؟'))return;persist({...data,tasks:data.tasks.filter(t=>t.id!==id),comments:data.comments.filter(c=>c.taskId!==id)});showToast('تم الحذف');};
+  const addComment=(taskId,memberId,memberName,content)=>{
+    const c={id:uid(),taskId,memberId,memberName,content,createdAt:new Date().toISOString()};
+    persist({...data,comments:[...data.comments,c]});
+  };
+
+  if(selectedClient){
+    return(
+      <BoardView
+        client={selectedClient}
+        data={data}
+        onBack={()=>setSelectedClient(null)}
+        addTask={addTask}
+        updTask={updTask}
+        delTask={delTask}
+        addComment={addComment}
+        showToast={showToast}
+        isAdmin={true}
+        logout={logout}
+      />
+    );
+  }
+
+  const tabs=[
+    {id:'dash',l:'الرئيسية',ic:'layout'},
+    {id:'clients',l:'الزبائن',ic:'building'},
+    {id:'team',l:'الفريق',ic:'users'},
+  ];
+
+  return(
+    <div style={{fontFamily:"'Cairo',sans-serif"}}>
+      <Header
+        title="منصة المهام"
+        subtitle="أدمين"
+        right={
+          <button onClick={logout} style={{display:'flex',alignItems:'center',gap:'0.35rem',padding:'0.375rem 0.75rem',borderRadius:'9999px',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.8rem'}}>
+            <Ic n="logout" size={14}/> خروج
+          </button>
+        }
+      />
+      {/* Tab bar */}
+      <div style={{background:B.card,borderBottom:`1px solid ${B.border}`,padding:'0 1rem'}}>
+        <div style={{maxWidth:'80rem',margin:'0 auto',display:'flex',gap:'0.25rem'}}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)}
+              style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.75rem 1rem',fontSize:'0.85rem',fontWeight:'700',border:'none',borderBottom:tab===t.id?`2px solid ${B.accent}`:'2px solid transparent',background:'transparent',color:tab===t.id?B.accent:B.muted,cursor:'pointer',marginBottom:'-1px'}}>
+              <Ic n={t.ic} size={15} color={tab===t.id?B.accent:B.muted}/>{t.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{maxWidth:'80rem',margin:'0 auto',padding:'1.25rem 1rem'}}>
+        {tab==='dash'&&<AdminDash data={data} onSelectClient={setSelectedClient}/>}
+        {tab==='clients'&&<ClientsTab data={data} addClient={addClient} updClient={updClient} delClient={delClient} onSelectClient={setSelectedClient}/>}
+        {tab==='team'&&<TeamTab data={data} addMember={addMember} updMember={updMember} delMember={delMember}/>}
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMIN DASHBOARD ──────────────────────────────────────
+function AdminDash({data,onSelectClient}){
+  const overdue=data.tasks.filter(t=>t.stage!=='done'&&isOverdue(t.dueDate));
+  const dueToday=data.tasks.filter(t=>t.stage!=='done'&&isToday(t.dueDate));
+  const inProgress=data.tasks.filter(t=>t.stage!=='done'&&t.stage!=='review').length;
+  const done=data.tasks.filter(t=>t.stage==='done').length;
+
+  // Team workload
+  const workload=data.members.map(m=>({
+    ...m,
+    count:data.tasks.filter(t=>t.stage!=='done'&&(t.assignees||[]).includes(m.id)).length
+  })).sort((a,b)=>b.count-a.count);
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+      {/* Stats */}
+      <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'0.75rem'}}>
+        {[
+          {l:'مهام نشطة',v:inProgress,ic:'kanban',c:B.info},
+          {l:'مكتملة',v:done,ic:'check',c:B.success},
+          {l:'متأخرة',v:overdue.length,ic:'alert',c:B.danger},
+          {l:'موعدها اليوم',v:dueToday.length,ic:'clock',c:B.warning},
+        ].map(s=>(
+          <div key={s.l} style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'1rem'}}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:'0.5rem'}}>
+              <span style={{fontSize:'0.75rem',color:B.muted,fontWeight:'600'}}>{s.l}</span>
+              <Ic n={s.ic} size={16} color={s.c}/>
+            </div>
+            <div style={{fontSize:'1.75rem',fontWeight:'900',color:s.c}}>{s.v}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Overdue alert */}
+      {overdue.length>0&&(
+        <div style={{background:`${B.danger}15`,border:`1px solid ${B.danger}33`,borderRadius:'1rem',padding:'1rem'}}>
+          <div style={{fontWeight:'700',color:B.danger,fontSize:'0.875rem',marginBottom:'0.5rem'}}>⚠️ مهام متأخرة ({overdue.length})</div>
+          {overdue.slice(0,3).map(t=>{
+            const client=data.clients.find(c=>c.id===t.clientId);
+            return(
+              <div key={t.id} style={{display:'flex',justifyContent:'space-between',fontSize:'0.8rem',color:B.text,padding:'0.25rem 0'}}>
+                <span>{t.title}</span>
+                <span style={{color:B.danger,fontWeight:'600'}}>{client?.name} · {fmtDate(t.dueDate)}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Clients overview */}
+      <div>
+        <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'0.75rem'}}>الزبائن</div>
+        {data.clients.length===0
+          ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'2.5rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش زبائن بعد — زيد من تبويب "الزبائن"</div>
+          :<div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:'0.75rem'}}>
+            {data.clients.map(c=>{
+              const tasks=data.tasks.filter(t=>t.clientId===c.id);
+              const done=tasks.filter(t=>t.stage==='done').length;
+              const total=tasks.length;
+              const pct=total>0?Math.round(done/total*100):0;
+              return(
+                <button key={c.id} onClick={()=>onSelectClient(c)}
+                  style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'1rem',cursor:'pointer',textAlign:'right',transition:'border-color 0.15s'}}
+                  onMouseEnter={e=>e.currentTarget.style.borderColor=c.color}
+                  onMouseLeave={e=>e.currentTarget.style.borderColor=B.border}>
+                  <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'0.5rem'}}>
+                    <div style={{width:10,height:10,borderRadius:'50%',background:c.color,flexShrink:0}}/>
+                    <div style={{fontWeight:'700',color:B.text,fontSize:'0.9rem'}}>{c.name}</div>
+                  </div>
+                  <div style={{fontSize:'0.75rem',color:B.muted,marginBottom:'0.5rem'}}>{total} مهمة · {done} مكتملة</div>
+                  <div style={{height:4,background:B.border,borderRadius:2}}>
+                    <div style={{height:'100%',width:`${pct}%`,background:c.color,borderRadius:2,transition:'width 0.3s'}}/>
+                  </div>
+                  <div style={{fontSize:'0.7rem',color:B.muted,marginTop:'0.25rem',textAlign:'left'}}>{pct}%</div>
+                </button>
+              );
+            })}
+          </div>
+        }
+      </div>
+
+      {/* Team workload */}
+      {workload.length>0&&(
+        <div>
+          <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'0.75rem'}}>عبء الفريق</div>
+          <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+            {workload.map(m=>(
+              <div key={m.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.75rem 1rem',borderBottom:`1px solid ${B.border}`}}>
+                <Avatar name={m.name} color={m.color} size={36}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:'700',color:B.text,fontSize:'0.875rem'}}>{m.name}</div>
+                  <div style={{fontSize:'0.7rem',color:B.muted}}>{MEMBER_ROLES.find(r=>r.id===m.role)?.label}</div>
+                </div>
+                <div style={{fontSize:'0.875rem',fontWeight:'700',color:m.count>5?B.danger:m.count>2?B.warning:B.success}}>{m.count} مهام</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CLIENTS TAB ──────────────────────────────────────────
+function ClientsTab({data,addClient,updClient,delClient,onSelectClient}){
+  const[showForm,setShowForm]=useState(false);
+  const[editing,setEditing]=useState(null);
+  const[name,setName]=useState('');
+  const[color,setColor]=useState(COLORS[0]);
+
+  const save=()=>{
+    if(!name.trim())return;
+    if(editing)updClient(editing.id,{name:name.trim(),color});
+    else addClient(name.trim(),color);
+    setName('');setColor(COLORS[0]);setEditing(null);setShowForm(false);
+  };
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>الزبائن</h2>
+        <button onClick={()=>{setEditing(null);setName('');setColor(COLORS[0]);setShowForm(true);}}
+          style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
+          <Ic n="plus" size={16} color="white"/> زيد زبون
+        </button>
+      </div>
+
+      {data.clients.length===0
+        ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش زبائن بعد</div>
+        :<div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+          {data.clients.map(c=>{
+            const tasks=data.tasks.filter(t=>t.clientId===c.id);
+            return(
+              <div key={c.id} style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'1rem',display:'flex',alignItems:'center',gap:'0.75rem'}}>
+                <div style={{width:42,height:42,borderRadius:'0.75rem',background:c.color,display:'grid',placeItems:'center',fontWeight:'700',fontSize:'1.1rem',color:'white',flexShrink:0}}>
+                  {c.name.charAt(0)}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:'700',color:B.text}}>{c.name}</div>
+                  <div style={{fontSize:'0.75rem',color:B.muted}}>{tasks.length} مهمة · {tasks.filter(t=>t.stage==='done').length} مكتملة</div>
+                </div>
+                <div style={{display:'flex',gap:'0.25rem',flexShrink:0}}>
+                  <button onClick={()=>onSelectClient(c)} style={{padding:'0.4rem 0.75rem',borderRadius:'0.5rem',border:`1px solid ${B.border}`,background:'transparent',color:B.text,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700'}}>البورد</button>
+                  <button onClick={()=>{setEditing(c);setName(c.name);setColor(c.color);setShowForm(true);}} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',color:B.muted,display:'flex'}}><Ic n="pencil" size={15}/></button>
+                  <button onClick={()=>delClient(c.id)} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',color:B.danger,display:'flex'}}><Ic n="trash" size={15} color={B.danger}/></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      }
+
+      {showForm&&(
+        <Modal onClose={()=>setShowForm(false)} title={editing?'تعديل الزبون':'زبون جديد'}>
+          <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+            <Field label="اسم الزبون / الماركة">
+              <input value={name} onChange={e=>setName(e.target.value)} placeholder="مثال: كازا بلانكا" style={INP} autoFocus/>
+            </Field>
+            <Field label="اللون">
+              <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                {COLORS.map(c=>(
+                  <button key={c} onClick={()=>setColor(c)}
+                    style={{width:32,height:32,borderRadius:'50%',background:c,border:color===c?`3px solid white`:'3px solid transparent',cursor:'pointer',outline:color===c?`2px solid ${c}`:'none',outlineOffset:'1px'}}/>
+                ))}
+              </div>
+            </Field>
+            <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>
+              {editing?'حفظ':'زيد'}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── TEAM TAB ─────────────────────────────────────────────
+function TeamTab({data,addMember,updMember,delMember}){
+  const[showForm,setShowForm]=useState(false);
+  const[editing,setEditing]=useState(null);
+  const[name,setName]=useState('');
+  const[role,setRole]=useState('editor');
+  const[pw,setPw]=useState('');
+  const[color,setColor]=useState(COLORS[0]);
+  const[err,setErr]=useState('');
+
+  const save=()=>{
+    if(!name.trim())return setErr('دخل الاسم');
+    if(!editing&&pw.length<4)return setErr('كلمة السر لازم تكون 4 حروف');
+    if(editing&&pw&&pw.length<4)return setErr('كلمة السر لازم تكون 4 حروف');
+    if(editing){
+      const patch={name:name.trim(),role,color};
+      if(pw)patch.password=hash(pw);
+      updMember(editing.id,patch);
+    } else {
+      addMember(name.trim(),role,pw,color);
+    }
+    setShowForm(false);setEditing(null);setName('');setPw('');setErr('');
+  };
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>الفريق</h2>
+        <button onClick={()=>{setEditing(null);setName('');setRole('editor');setPw('');setColor(COLORS[0]);setShowForm(true);}}
+          style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
+          <Ic n="plus" size={16} color="white"/> زيد عضو
+        </button>
+      </div>
+
+      <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.75rem',fontSize:'0.8rem',color:B.accent}}>
+        💡 كل عضو يدخل بالاسم + كلمة سر تاوعو — يشوف غير مهامه هو
+      </div>
+
+      {data.members.length===0
+        ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش أعضاء بعد</div>
+        :<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+          {data.members.map((m,i)=>{
+            const taskCount=data.tasks.filter(t=>t.stage!=='done'&&(t.assignees||[]).includes(m.id)).length;
+            return(
+              <div key={m.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<data.members.length-1?`1px solid ${B.border}`:'none'}}>
+                <Avatar name={m.name} color={m.color} size={40}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:'700',color:B.text}}>{m.name}</div>
+                  <div style={{fontSize:'0.75rem',color:B.muted,display:'flex',gap:'0.5rem',alignItems:'center'}}>
+                    <span>{MEMBER_ROLES.find(r=>r.id===m.role)?.label}</span>
+                    <span>·</span>
+                    <span style={{color:taskCount>0?B.warning:B.success}}>{taskCount} مهام نشطة</span>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:'0.25rem'}}>
+                  <button onClick={()=>{setEditing(m);setName(m.name);setRole(m.role);setColor(m.color);setPw('');setShowForm(true);}} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',color:B.muted,display:'flex'}}><Ic n="pencil" size={15}/></button>
+                  <button onClick={()=>delMember(m.id)} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',color:B.danger,display:'flex'}}><Ic n="trash" size={15} color={B.danger}/></button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      }
+
+      {showForm&&(
+        <Modal onClose={()=>setShowForm(false)} title={editing?'تعديل العضو':'عضو جديد'}>
+          <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+            <Field label="الاسم">
+              <input value={name} onChange={e=>setName(e.target.value)} placeholder="اسم العضو" style={INP} autoFocus/>
+            </Field>
+            <Field label="الدور">
+              <select value={role} onChange={e=>setRole(e.target.value)} style={INP}>
+                {MEMBER_ROLES.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}
+              </select>
+            </Field>
+            <Field label={editing?'كلمة سر جديدة (اختياري)':'كلمة السر'}>
+              <PwField value={pw} onChange={setPw} placeholder={editing?'خليها فارغة باش ما تتبدلش':'4 حروف على الأقل'} onEnter={save}/>
+            </Field>
+            <Field label="اللون">
+              <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                {COLORS.map(c=>(
+                  <button key={c} onClick={()=>setColor(c)}
+                    style={{width:32,height:32,borderRadius:'50%',background:c,border:color===c?'3px solid white':'3px solid transparent',cursor:'pointer',outline:color===c?`2px solid ${c}`:'none',outlineOffset:'1px'}}/>
+                ))}
+              </div>
+            </Field>
+            {err&&<div style={{fontSize:'0.75rem',color:B.danger,fontWeight:'700'}}>{err}</div>}
+            <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>
+              {editing?'حفظ':'زيد'}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── BOARD VIEW (KANBAN) ──────────────────────────────────
+function BoardView({client,data,onBack,addTask,updTask,delTask,addComment,showToast,isAdmin,logout,me}){
+  const[showAddTask,setShowAddTask]=useState(null); // stage id
+  const[selectedTask,setSelectedTask]=useState(null);
+
+  const clientTasks=useMemo(()=>{
+    if(!isAdmin&&me)return data.tasks.filter(t=>t.clientId===client.id&&(t.assignees||[]).includes(me.id));
+    return data.tasks.filter(t=>t.clientId===client.id);
+  },[data.tasks,client.id,isAdmin,me]);
+
+  const tasksByStage=useMemo(()=>{
+    const m={};
+    STAGES.forEach(s=>{m[s.id]=clientTasks.filter(t=>t.stage===s.id);});
+    return m;
+  },[clientTasks]);
+
+  const moveTask=(taskId,newStage)=>{updTask(taskId,{stage:newStage});showToast(`نقلت لـ ${STAGES.find(s=>s.id===newStage)?.label}`);};
+
+  // Get selected task fresh data
+  const freshTask=selectedTask?data.tasks.find(t=>t.id===selectedTask.id):null;
+
+  return(
+    <div style={{fontFamily:"'Cairo',sans-serif",minHeight:'100vh',background:B.bg}}>
+      <Header
+        title={client.name}
+        subtitle={`${clientTasks.filter(t=>t.stage!=='done').length} مهمة نشطة`}
+        onBack={onBack}
+        right={
+          <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}>
+            {isAdmin&&(
+              <button onClick={()=>setShowAddTask('script')}
+                style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.4rem 0.875rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.8rem'}}>
+                <Ic n="plus" size={14} color="white"/> مهمة
+              </button>
+            )}
+            <button onClick={logout} style={{display:'flex',alignItems:'center',gap:'0.35rem',padding:'0.375rem 0.625rem',borderRadius:'9999px',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.75rem'}}>
+              <Ic n="logout" size={13}/> خروج
+            </button>
+          </div>
+        }
+      />
+
+      <div style={{padding:'1rem'}}>
+        <div className="kanban">
+          {STAGES.map(stage=>{
+            const stageTasks=tasksByStage[stage.id]||[];
+            return(
+              <div key={stage.id} style={{minWidth:'260px',maxWidth:'260px',display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+                {/* Column header */}
+                <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0.5rem 0.25rem'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+                    <span style={{fontSize:'1rem'}}>{stage.icon}</span>
+                    <span style={{fontWeight:'700',color:B.text,fontSize:'0.9rem'}}>{stage.label}</span>
+                    <span style={{fontSize:'0.7rem',padding:'1px 7px',borderRadius:'9999px',background:stage.color+'22',color:stage.color,fontWeight:'700'}}>{stageTasks.length}</span>
+                  </div>
+                  {isAdmin&&(
+                    <button onClick={()=>setShowAddTask(stage.id)} style={{background:'none',border:'none',cursor:'pointer',color:B.muted,display:'flex',padding:'2px'}}><Ic n="plus" size={16}/></button>
+                  )}
+                </div>
+
+                {/* Cards */}
+                <div style={{display:'flex',flexDirection:'column',gap:'0.625rem'}}>
+                  {stageTasks.map(task=>(
+                    <TaskCard
+                      key={task.id}
+                      task={task}
+                      data={data}
+                      onClick={()=>setSelectedTask(task)}
+                      onMove={isAdmin?moveTask:null}
+                      onDelete={isAdmin?()=>delTask(task.id):null}
+                      currentStage={stage.id}
+                    />
+                  ))}
+                  {isAdmin&&(
+                    <button onClick={()=>setShowAddTask(stage.id)}
+                      style={{padding:'0.6rem',borderRadius:'0.75rem',border:`1px dashed ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.8rem',textAlign:'center'}}>
+                      + زيد مهمة
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Add task modal */}
+      {showAddTask&&(
+        <AddTaskModal
+          stage={showAddTask}
+          client={client}
+          members={data.members}
+          onClose={()=>setShowAddTask(null)}
+          onSave={(task)=>{addTask(task);setShowAddTask(null);}}
+        />
+      )}
+
+      {/* Task detail modal */}
+      {freshTask&&(
+        <TaskDetailModal
+          task={freshTask}
+          data={data}
+          onClose={()=>setSelectedTask(null)}
+          onUpdate={(patch)=>updTask(freshTask.id,patch)}
+          onDelete={isAdmin?()=>{delTask(freshTask.id);setSelectedTask(null);}:null}
+          onMove={isAdmin?moveTask:null}
+          onAddComment={addComment}
+          isAdmin={isAdmin}
+          me={me}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── TASK CARD ────────────────────────────────────────────
+function TaskCard({task,data,onClick,onMove,onDelete,currentStage}){
+  const assignees=data.members.filter(m=>(task.assignees||[]).includes(m.id));
+  const ct=CONTENT_TYPES.find(c=>c.id===task.contentType);
+  const pr=PRIORITIES.find(p=>p.id===task.priority);
+  const commentCount=data.comments.filter(c=>c.taskId===task.id).length;
+  const overdue=isOverdue(task.dueDate);
+  const today=isToday(task.dueDate);
+
+  const stageIdx=STAGES.findIndex(s=>s.id===currentStage);
+  const prevStage=stageIdx>0?STAGES[stageIdx-1]:null;
+  const nextStage=stageIdx<STAGES.length-1?STAGES[stageIdx+1]:null;
+
+  return(
+    <div onClick={onClick}
+      style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'0.875rem',padding:'0.875rem',cursor:'pointer',transition:'border-color 0.15s',borderRight:`3px solid ${pr?.color||B.border}`}}
+      onMouseEnter={e=>e.currentTarget.style.borderColor=B.accent}
+      onMouseLeave={e=>e.currentTarget.style.borderColor=B.border}>
+
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:'0.5rem',marginBottom:'0.5rem'}}>
+        <div style={{fontSize:'0.875rem',fontWeight:'700',color:B.text,lineHeight:1.4,flex:1}}>{task.title}</div>
+        {ct&&<span style={{fontSize:'0.9rem',flexShrink:0}}>{ct.icon}</span>}
+      </div>
+
+      {(task.description||task.shootDate)&&(
+        <div style={{fontSize:'0.75rem',color:B.muted,marginBottom:'0.5rem',lineHeight:1.4}}>
+          {task.description&&<div style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{task.description}</div>}
+          {task.shootDate&&<div style={{color:B.info,marginTop:'2px'}}>📷 تصوير: {fmtDate(task.shootDate)}</div>}
+        </div>
+      )}
+
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'0.5rem'}}>
+        <div style={{display:'flex',alignItems:'center',gap:'0.4rem'}}>
+          {task.dueDate&&(
+            <span style={{fontSize:'0.7rem',color:overdue?B.danger:today?B.warning:B.muted,fontWeight:overdue||today?'700':'400',display:'flex',alignItems:'center',gap:'2px'}}>
+              <Ic n="calendar" size={11} color={overdue?B.danger:today?B.warning:B.muted}/>
+              {overdue?'متأخر':today?'اليوم':fmtDate(task.dueDate)}
+            </span>
+          )}
+          {commentCount>0&&(
+            <span style={{fontSize:'0.7rem',color:B.muted,display:'flex',alignItems:'center',gap:'2px'}}>
+              <Ic n="message" size={11}/>{commentCount}
+            </span>
+          )}
+        </div>
+        <div style={{display:'flex',gap:-6}}>
+          {assignees.slice(0,3).map((m,i)=>(
+            <div key={m.id} style={{marginRight:i>0?'-8px':'0',border:`2px solid ${B.card}`,borderRadius:'50%'}}>
+              <Avatar name={m.name} color={m.color} size={22} fontSize={8}/>
+            </div>
+          ))}
+          {assignees.length>3&&<div style={{width:22,height:22,borderRadius:'50%',background:B.border,display:'grid',placeItems:'center',fontSize:'8px',color:B.muted,marginRight:'-8px',border:`2px solid ${B.card}`}}>+{assignees.length-3}</div>}
+        </div>
+      </div>
+
+      {/* Move buttons */}
+      {onMove&&(
+        <div onClick={e=>e.stopPropagation()} style={{display:'flex',gap:'0.25rem',marginTop:'0.625rem',paddingTop:'0.625rem',borderTop:`1px solid ${B.border}`}}>
+          {prevStage&&(
+            <button onClick={()=>onMove(task.id,prevStage.id)}
+              style={{flex:1,padding:'0.3rem',borderRadius:'0.5rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.7rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'3px'}}>
+              <Ic n="chevronRight" size={12}/>{prevStage.label}
+            </button>
+          )}
+          {nextStage&&(
+            <button onClick={()=>onMove(task.id,nextStage.id)}
+              style={{flex:1,padding:'0.3rem',borderRadius:'0.5rem',border:`1px solid ${nextStage.color}44`,background:`${nextStage.color}11`,color:nextStage.color,cursor:'pointer',fontSize:'0.7rem',display:'flex',alignItems:'center',justifyContent:'center',gap:'3px'}}>
+              {nextStage.label}<Ic n="chevronLeft" size={12} color={nextStage.color}/>
+            </button>
+          )}
+          {onDelete&&(
+            <button onClick={()=>onDelete()} style={{padding:'0.3rem 0.5rem',borderRadius:'0.5rem',border:'none',background:'transparent',color:B.danger,cursor:'pointer',display:'flex'}}>
+              <Ic n="trash" size={13} color={B.danger}/>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ADD TASK MODAL ───────────────────────────────────────
+function AddTaskModal({stage,client,members,onClose,onSave}){
+  const[title,setTitle]=useState('');
+  const[desc,setDesc]=useState('');
+  const[contentType,setContentType]=useState('reel');
+  const[priority,setPriority]=useState('normal');
+  const[shootDate,setShootDate]=useState('');
+  const[dueDate,setDueDate]=useState('');
+  const[assignees,setAssignees]=useState([]);
+
+  const toggleAssignee=id=>setAssignees(a=>a.includes(id)?a.filter(x=>x!==id):[...a,id]);
+
+  const save=()=>{
+    if(!title.trim())return alert('دخل عنوان المهمة');
+    onSave({title:title.trim(),description:desc,clientId:client.id,stage,contentType,priority,shootDate:shootDate||null,dueDate:dueDate||null,assignees});
+  };
+
+  return(
+    <Modal onClose={onClose} title={`مهمة جديدة — ${STAGES.find(s=>s.id===stage)?.label}`}>
+      <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+        <Field label="عنوان المهمة">
+          <input value={title} onChange={e=>setTitle(e.target.value)} placeholder="مثال: ريلز منتج الأسبوع" style={INP} autoFocus/>
+        </Field>
+        <Field label="وصف / ملاحظات">
+          <textarea value={desc} onChange={e=>setDesc(e.target.value)} placeholder="تفاصيل إضافية..." style={{...INP,height:70,resize:'none'}}/>
+        </Field>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+          <Field label="نوع المحتوى">
+            <select value={contentType} onChange={e=>setContentType(e.target.value)} style={INP}>
+              {CONTENT_TYPES.map(c=><option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+            </select>
+          </Field>
+          <Field label="الأولوية">
+            <select value={priority} onChange={e=>setPriority(e.target.value)} style={INP}>
+              {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+          <Field label="📷 تاريخ التصوير">
+            <input type="date" value={shootDate} onChange={e=>setShootDate(e.target.value)} style={INP}/>
+          </Field>
+          <Field label="📅 تاريخ التسليم">
+            <input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} style={INP}/>
+          </Field>
+        </div>
+        <Field label="تعيين للفريق">
+          {members.length===0
+            ?<div style={{fontSize:'0.8rem',color:B.muted}}>ما كاينش أعضاء بعد</div>
+            :<div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+              {members.map(m=>(
+                <label key={m.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.5rem 0.75rem',borderRadius:'0.75rem',background:assignees.includes(m.id)?`${m.color}15`:B.inputBg,border:`1px solid ${assignees.includes(m.id)?m.color:B.border}`,cursor:'pointer'}}>
+                  <input type="checkbox" checked={assignees.includes(m.id)} onChange={()=>toggleAssignee(m.id)} style={{width:16,height:16,accentColor:m.color}}/>
+                  <Avatar name={m.name} color={m.color} size={28} fontSize={10}/>
+                  <div>
+                    <div style={{fontSize:'0.85rem',fontWeight:'700',color:B.text}}>{m.name}</div>
+                    <div style={{fontSize:'0.7rem',color:B.muted}}>{MEMBER_ROLES.find(r=>r.id===m.role)?.label}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          }
+        </Field>
+        <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>
+          أضف المهمة
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── TASK DETAIL MODAL ────────────────────────────────────
+function TaskDetailModal({task,data,onClose,onUpdate,onDelete,onMove,onAddComment,isAdmin,me}){
+  const[newComment,setNewComment]=useState('');
+  const[editing,setEditing]=useState(false);
+  const[title,setTitle]=useState(task.title);
+  const[desc,setDesc]=useState(task.description||'');
+  const[shootDate,setShootDate]=useState(task.shootDate||'');
+  const[dueDate,setDueDate]=useState(task.dueDate||'');
+  const[priority,setPriority]=useState(task.priority||'normal');
+  const[contentType,setContentType]=useState(task.contentType||'reel');
+  const[assignees,setAssignees]=useState(task.assignees||[]);
+
+  const comments=data.comments.filter(c=>c.taskId===task.id).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  const assignedMembers=data.members.filter(m=>(task.assignees||[]).includes(m.id));
+  const ct=CONTENT_TYPES.find(c=>c.id===task.contentType);
+  const pr=PRIORITIES.find(p=>p.id===task.priority);
+  const stageInfo=STAGES.find(s=>s.id===task.stage);
+  const stageIdx=STAGES.findIndex(s=>s.id===task.stage);
+
+  const sendComment=()=>{
+    if(!newComment.trim())return;
+    const authorId=me?.id||'admin';
+    const authorName=me?.name||'أدمين';
+    onAddComment(task.id,authorId,authorName,newComment.trim());
+    setNewComment('');
+  };
+
+  const saveEdit=()=>{
+    if(!title.trim())return;
+    onUpdate({title,description:desc,shootDate:shootDate||null,dueDate:dueDate||null,priority,contentType,assignees});
+    setEditing(false);
+  };
+
+  const toggleAssignee=id=>setAssignees(a=>a.includes(id)?a.filter(x=>x!==id):[...a,id]);
+
+  return(
+    <Modal onClose={onClose} title="" width="32rem">
+      <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
+
+        {/* Stage + type */}
+        <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap',alignItems:'center',justifyContent:'space-between'}}>
+          <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+            <Badge label={`${stageInfo?.icon} ${stageInfo?.label}`} color={stageInfo?.color}/>
+            {ct&&<Badge label={`${ct.icon} ${ct.label}`} color={B.muted}/>}
+            {pr&&<Badge label={pr.label} color={pr.color}/>}
+          </div>
+          <div style={{display:'flex',gap:'0.25rem'}}>
+            {isAdmin&&<button onClick={()=>setEditing(!editing)} style={{padding:'0.35rem 0.625rem',borderRadius:'0.5rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.75rem',display:'flex',alignItems:'center',gap:'3px'}}><Ic n="pencil" size={13}/>تعديل</button>}
+            {isAdmin&&onDelete&&<button onClick={onDelete} style={{padding:'0.35rem',border:'none',background:'none',cursor:'pointer',color:B.danger,display:'flex'}}><Ic n="trash" size={15} color={B.danger}/></button>}
+          </div>
+        </div>
+
+        {/* Title */}
+        {editing?(
+          <div style={{display:'flex',flexDirection:'column',gap:'0.75rem'}}>
+            <Field label="العنوان">
+              <input value={title} onChange={e=>setTitle(e.target.value)} style={INP}/>
+            </Field>
+            <Field label="الوصف">
+              <textarea value={desc} onChange={e=>setDesc(e.target.value)} style={{...INP,height:70,resize:'none'}}/>
+            </Field>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+              <Field label="نوع المحتوى">
+                <select value={contentType} onChange={e=>setContentType(e.target.value)} style={INP}>
+                  {CONTENT_TYPES.map(c=><option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+                </select>
+              </Field>
+              <Field label="الأولوية">
+                <select value={priority} onChange={e=>setPriority(e.target.value)} style={INP}>
+                  {PRIORITIES.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
+              <Field label="📷 تاريخ التصوير">
+                <input type="date" value={shootDate} onChange={e=>setShootDate(e.target.value)} style={INP}/>
+              </Field>
+              <Field label="📅 تاريخ التسليم">
+                <input type="date" value={dueDate} onChange={e=>setDueDate(e.target.value)} style={INP}/>
+              </Field>
+            </div>
+            <Field label="الفريق">
+              <div style={{display:'flex',flexDirection:'column',gap:'0.375rem'}}>
+                {data.members.map(m=>(
+                  <label key={m.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.5rem 0.75rem',borderRadius:'0.75rem',background:assignees.includes(m.id)?`${m.color}15`:B.inputBg,border:`1px solid ${assignees.includes(m.id)?m.color:B.border}`,cursor:'pointer'}}>
+                    <input type="checkbox" checked={assignees.includes(m.id)} onChange={()=>toggleAssignee(m.id)} style={{width:15,height:15,accentColor:m.color}}/>
+                    <Avatar name={m.name} color={m.color} size={26} fontSize={9}/>
+                    <span style={{fontSize:'0.85rem',fontWeight:'700',color:B.text}}>{m.name}</span>
+                  </label>
+                ))}
+              </div>
+            </Field>
+            <div style={{display:'flex',gap:'0.5rem'}}>
+              <button onClick={saveEdit} style={{flex:1,padding:'0.75rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>حفظ</button>
+              <button onClick={()=>setEditing(false)} style={{padding:'0.75rem 1rem',borderRadius:'0.75rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontWeight:'700'}}>إلغاء</button>
+            </div>
+          </div>
+        ):(
+          <>
+            <div>
+              <h3 style={{fontSize:'1.1rem',fontWeight:'800',color:B.text,lineHeight:1.4}}>{task.title}</h3>
+              {task.description&&<p style={{fontSize:'0.875rem',color:B.muted,marginTop:'0.375rem',lineHeight:1.6}}>{task.description}</p>}
+            </div>
+
+            {/* Dates */}
+            <div style={{display:'flex',gap:'0.75rem',flexWrap:'wrap'}}>
+              {task.shootDate&&(
+                <div style={{fontSize:'0.8rem',color:B.info,background:`${B.info}15`,padding:'0.375rem 0.75rem',borderRadius:'9999px',display:'flex',alignItems:'center',gap:'4px'}}>
+                  📷 تصوير: {fmtDate(task.shootDate)}
+                </div>
+              )}
+              {task.dueDate&&(
+                <div style={{fontSize:'0.8rem',color:isOverdue(task.dueDate)?B.danger:isToday(task.dueDate)?B.warning:B.muted,background:`${isOverdue(task.dueDate)?B.danger:isToday(task.dueDate)?B.warning:B.border}22`,padding:'0.375rem 0.75rem',borderRadius:'9999px',display:'flex',alignItems:'center',gap:'4px',fontWeight:isOverdue(task.dueDate)?'700':'400'}}>
+                  📅 تسليم: {isOverdue(task.dueDate)?'متأخر — ':isToday(task.dueDate)?'اليوم — ':''}{fmtDate(task.dueDate)}
+                </div>
+              )}
+            </div>
+
+            {/* Assignees */}
+            {assignedMembers.length>0&&(
+              <div>
+                <div style={{fontSize:'0.75rem',fontWeight:'700',color:B.muted,marginBottom:'0.5rem'}}>الفريق المكلف</div>
+                <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                  {assignedMembers.map(m=>(
+                    <div key={m.id} style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.3rem 0.625rem 0.3rem 0.375rem',borderRadius:'9999px',background:`${m.color}15`,border:`1px solid ${m.color}33`}}>
+                      <Avatar name={m.name} color={m.color} size={22} fontSize={8}/>
+                      <span style={{fontSize:'0.8rem',fontWeight:'700',color:B.text}}>{m.name}</span>
+                      <span style={{fontSize:'0.7rem',color:B.muted}}>({MEMBER_ROLES.find(r=>r.id===m.role)?.label})</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Move stage */}
+            {onMove&&isAdmin&&(
+              <div>
+                <div style={{fontSize:'0.75rem',fontWeight:'700',color:B.muted,marginBottom:'0.5rem'}}>نقل المهمة</div>
+                <div style={{display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                  {STAGES.map((s,i)=>(
+                    <button key={s.id} onClick={()=>onUpdate({stage:s.id})}
+                      style={{padding:'0.375rem 0.75rem',borderRadius:'9999px',border:`1px solid ${s.id===task.stage?s.color:B.border}`,background:s.id===task.stage?`${s.color}22`:'transparent',color:s.id===task.stage?s.color:B.muted,cursor:'pointer',fontSize:'0.8rem',fontWeight:s.id===task.stage?'700':'400'}}>
+                      {s.icon} {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Comments */}
+        <div style={{borderTop:`1px solid ${B.border}`,paddingTop:'1rem'}}>
+          <div style={{fontSize:'0.85rem',fontWeight:'700',color:B.text,marginBottom:'0.75rem',display:'flex',alignItems:'center',gap:'0.4rem'}}>
+            <Ic n="message" size={15}/> التعليقات ({comments.length})
+          </div>
+          {comments.length===0&&(
+            <div style={{fontSize:'0.8rem',color:B.muted,textAlign:'center',padding:'1rem'}}>ما كاينش تعليقات بعد</div>
+          )}
+          <div style={{display:'flex',flexDirection:'column',gap:'0.625rem',maxHeight:'200px',overflowY:'auto',marginBottom:'0.75rem'}}>
+            {comments.map(c=>(
+              <div key={c.id} style={{display:'flex',gap:'0.625rem'}}>
+                <Avatar name={c.memberName||'A'} color={data.members.find(m=>m.id===c.memberId)?.color||B.accent} size={30} fontSize={10}/>
+                <div style={{flex:1,background:B.card2,borderRadius:'0.75rem',padding:'0.5rem 0.75rem',border:`1px solid ${B.border}`}}>
+                  <div style={{fontSize:'0.75rem',fontWeight:'700',color:B.text}}>{c.memberName}</div>
+                  <div style={{fontSize:'0.8rem',color:B.muted,lineHeight:1.5,marginTop:'2px'}}>{c.content}</div>
+                  <div style={{fontSize:'0.65rem',color:B.border,marginTop:'4px'}}>{fmtDate(c.createdAt)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{display:'flex',gap:'0.5rem'}}>
+            <input value={newComment} onChange={e=>setNewComment(e.target.value)} onKeyDown={e=>e.key==='Enter'&&sendComment()}
+              placeholder="اكتب تعليق..." style={{...INP,flex:1,padding:'0.625rem 0.875rem'}}/>
+            <button onClick={sendComment} style={{padding:'0.625rem 1rem',borderRadius:'0.75rem',background:B.accent,color:'white',border:'none',cursor:'pointer',display:'flex',alignItems:'center'}}>
+              <Ic n="send" size={15} color="white"/>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── MEMBER APP ───────────────────────────────────────────
+function MemberApp({data,persist,showToast,logout,me}){
+  const[selectedClient,setSelectedClient]=useState(null);
+  const[filter,setFilter]=useState('active'); // active | done | all
+
+  const myTasks=useMemo(()=>data.tasks.filter(t=>(t.assignees||[]).includes(me?.id)),[data.tasks,me]);
+
+  const filtered=useMemo(()=>{
+    if(filter==='active')return myTasks.filter(t=>t.stage!=='done');
+    if(filter==='done')return myTasks.filter(t=>t.stage==='done');
+    return myTasks;
+  },[myTasks,filter]);
+
+  const addComment=(taskId,memberId,memberName,content)=>{
+    const c={id:uid(),taskId,memberId,memberName,content,createdAt:new Date().toISOString()};
+    persist({...data,comments:[...data.comments,c]});
+  };
+  const updTask=(id,patch)=>persist({...data,tasks:data.tasks.map(t=>t.id===id?{...t,...patch}:t)});
+
+  const[selectedTask,setSelectedTask]=useState(null);
+  const freshTask=selectedTask?data.tasks.find(t=>t.id===selectedTask.id):null;
+
+  // Group by stage
+  const byStage=useMemo(()=>{
+    const m={};
+    STAGES.forEach(s=>{m[s.id]=filtered.filter(t=>t.stage===s.id);});
+    return m;
+  },[filtered]);
+
+  const overdue=myTasks.filter(t=>t.stage!=='done'&&isOverdue(t.dueDate)).length;
+
+  return(
+    <div style={{fontFamily:"'Cairo',sans-serif",minHeight:'100vh',background:B.bg}}>
+      <Header
+        title={me?.name||'عضو'}
+        subtitle={`${MEMBER_ROLES.find(r=>r.id===me?.role)?.label||''} · ${myTasks.filter(t=>t.stage!=='done').length} مهمة نشطة`}
+        right={
+          <button onClick={logout} style={{display:'flex',alignItems:'center',gap:'0.35rem',padding:'0.375rem 0.625rem',borderRadius:'9999px',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.75rem'}}>
+            <Ic n="logout" size={13}/> خروج
+          </button>
+        }
+      />
+
+      <div style={{maxWidth:'80rem',margin:'0 auto',padding:'1.25rem 1rem',display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+
+        {/* Alert overdue */}
+        {overdue>0&&(
+          <div style={{background:`${B.danger}15`,border:`1px solid ${B.danger}33`,borderRadius:'1rem',padding:'0.875rem 1rem',display:'flex',gap:'0.75rem',alignItems:'center'}}>
+            <span style={{fontSize:'1.25rem'}}>⚠️</span>
+            <div>
+              <div style={{fontWeight:'700',color:B.danger,fontSize:'0.875rem'}}>عندك {overdue} مهمة متأخرة</div>
+              <div style={{fontSize:'0.75rem',color:B.muted}}>تابعهم بسرعة</div>
+            </div>
+          </div>
+        )}
+
+        {/* Stats */}
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'0.625rem'}}>
+          {[
+            {l:'نشطة',v:myTasks.filter(t=>t.stage!=='done').length,c:B.info},
+            {l:'متأخرة',v:overdue,c:B.danger},
+            {l:'مكتملة',v:myTasks.filter(t=>t.stage==='done').length,c:B.success},
+          ].map(s=>(
+            <div key={s.l} style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'0.875rem',padding:'0.75rem',textAlign:'center'}}>
+              <div style={{fontSize:'1.5rem',fontWeight:'900',color:s.c}}>{s.v}</div>
+              <div style={{fontSize:'0.72rem',color:B.muted}}>{s.l}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Filter */}
+        <div style={{display:'flex',gap:'0.375rem',background:B.card,padding:'0.25rem',borderRadius:'0.875rem',border:`1px solid ${B.border}`}}>
+          {[{v:'active',l:'نشطة'},{v:'done',l:'مكتملة'},{v:'all',l:'الكل'}].map(f=>(
+            <button key={f.v} onClick={()=>setFilter(f.v)}
+              style={{flex:1,padding:'0.5rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:filter===f.v?B.accent:'transparent',color:filter===f.v?'white':B.muted,transition:'all 0.15s'}}>
+              {f.l}
+            </button>
+          ))}
+        </div>
+
+        {/* Tasks by stage */}
+        {filtered.length===0?(
+          <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>
+            {filter==='active'?'🎉 ما عندكش مهام نشطة':'ما كاينش مهام'}
+          </div>
+        ):(
+          <div style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+            {STAGES.map(stage=>{
+              const tasks=byStage[stage.id]||[];
+              if(tasks.length===0)return null;
+              return(
+                <div key={stage.id}>
+                  <div style={{display:'flex',alignItems:'center',gap:'0.5rem',marginBottom:'0.625rem'}}>
+                    <span style={{fontSize:'1rem'}}>{stage.icon}</span>
+                    <span style={{fontWeight:'700',color:B.text,fontSize:'0.9rem'}}>{stage.label}</span>
+                    <span style={{fontSize:'0.7rem',padding:'1px 7px',borderRadius:'9999px',background:stage.color+'22',color:stage.color,fontWeight:'700'}}>{tasks.length}</span>
+                  </div>
+                  <div style={{display:'flex',flexDirection:'column',gap:'0.625rem'}}>
+                    {tasks.map(task=>{
+                      const client=data.clients.find(c=>c.id===task.clientId);
+                      const ct=CONTENT_TYPES.find(c=>c.id===task.contentType);
+                      const commentCount=data.comments.filter(c=>c.taskId===task.id).length;
+                      const overdue=isOverdue(task.dueDate);
+                      const today=isToday(task.dueDate);
+                      return(
+                        <div key={task.id} onClick={()=>setSelectedTask(task)}
+                          style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'0.875rem',padding:'0.875rem',cursor:'pointer',borderRight:`3px solid ${client?.color||B.accent}`}}>
+                          <div style={{display:'flex',justifyContent:'space-between',gap:'0.5rem',marginBottom:'0.375rem'}}>
+                            <div style={{fontWeight:'700',color:B.text,fontSize:'0.875rem',flex:1}}>{task.title}</div>
+                            <div style={{display:'flex',gap:'0.375rem',flexShrink:0}}>
+                              {ct&&<span>{ct.icon}</span>}
+                            </div>
+                          </div>
+                          <div style={{display:'flex',alignItems:'center',gap:'0.625rem',flexWrap:'wrap'}}>
+                            {client&&<Badge label={client.name} color={client.color}/>}
+                            {task.shootDate&&<span style={{fontSize:'0.72rem',color:B.info}}>📷 {fmtDate(task.shootDate)}</span>}
+                            {task.dueDate&&<span style={{fontSize:'0.72rem',color:overdue?B.danger:today?B.warning:B.muted,fontWeight:overdue||today?'700':'400'}}>📅 {overdue?'متأخر':today?'اليوم':fmtDate(task.dueDate)}</span>}
+                            {commentCount>0&&<span style={{fontSize:'0.72rem',color:B.muted,display:'flex',alignItems:'center',gap:'2px'}}><Ic n="message" size={11}/>{commentCount}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Task detail */}
+      {freshTask&&(
+        <TaskDetailModal
+          task={freshTask}
+          data={data}
+          onClose={()=>setSelectedTask(null)}
+          onUpdate={(patch)=>updTask(freshTask.id,patch)}
+          onDelete={null}
+          onMove={null}
+          onAddComment={addComment}
+          isAdmin={false}
+          me={me}
+        />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
