@@ -1121,19 +1121,19 @@ const BOOK_STATUS=[
 ];
 
 function ServiceModule({data,addService,updService,delService}){
-  const[tab,setTab]=useState('services'); // services | bookings
+  const[tab,setTab]=useState('services');
   const[showAddSvc,setShowAddSvc]=useState(false);
   const[showAddBook,setShowAddBook]=useState(false);
   const[editSvc,setEditSvc]=useState(null);
   const services=data.services||[];
-  // bookings stored inside each service: service.bookings[]
   const allBookings=services.flatMap(s=>(s.bookings||[]).map(b=>({...b,serviceName:s.name,serviceId:s.id,unitPrice:s.price,unit:s.unit})));
-  const pendingBookings=allBookings.filter(b=>b.status==='pending'||b.status==='confirmed');
   const totalRevenue=allBookings.filter(b=>b.status==='done').reduce((s,b)=>s+Number(b.total||0),0);
 
   const addBooking=(serviceId,booking)=>{
-    const updated=services.map(s=>s.id===serviceId?{...s,bookings:[...(s.bookings||[]),{id:uid(),...booking,createdAt:new Date().toISOString()}]}:s);
-    updService(serviceId,{bookings:updated.find(s=>s.id===serviceId).bookings});
+    const svc=services.find(s=>s.id===serviceId);
+    if(!svc)return;
+    const newBookings=[...(svc.bookings||[]),{id:uid(),...booking,createdAt:new Date().toISOString()}];
+    updService(serviceId,{bookings:newBookings});
   };
   const updBooking=(serviceId,bookingId,patch)=>{
     const svc=services.find(s=>s.id===serviceId);
@@ -1155,34 +1155,31 @@ function ServiceModule({data,addService,updService,delService}){
         </div>
         <button onClick={()=>tab==='services'?setShowAddSvc(true):setShowAddBook(true)}
           style={{display:'flex',alignItems:'center',gap:'0.4rem',padding:'0.5rem 1rem',borderRadius:'9999px',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer',fontSize:'0.85rem'}}>
-          <Ic n="plus" size={16} color="white"/> {tab==='services'?'زيد خدمة':'زيد حجز'}
+          <Ic n="plus" size={16} color="white"/> {tab==='services'?'زيد خدمة':tab==='bookings'?'زيد حجز':''}
         </button>
       </div>
 
-      {/* Stats */}
       <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'0.625rem'}}>
         <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
           <div style={{fontSize:'1.5rem',fontWeight:'900',color:B.info}}>{services.length}</div>
           <div style={{fontSize:'0.72rem',color:B.muted}}>خدمات</div>
         </div>
         <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
-          <div style={{fontSize:'1.5rem',fontWeight:'900',color:B.warning}}>{pendingBookings.length}</div>
+          <div style={{fontSize:'1.5rem',fontWeight:'900',color:B.warning}}>{allBookings.filter(b=>b.status==='pending'||b.status==='confirmed').length}</div>
           <div style={{fontSize:'0.72rem',color:B.muted}}>حجوزات نشطة</div>
         </div>
         <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
-          <div style={{fontSize:'1.1rem',fontWeight:'900',color:B.success,fontVariantNumeric:'tabular-nums'}}>{fmt(totalRevenue)}</div>
+          <div style={{fontSize:'1rem',fontWeight:'900',color:B.success,fontVariantNumeric:'tabular-nums'}}>{fmt(totalRevenue)}</div>
           <div style={{fontSize:'0.72rem',color:B.muted}}>دج مقبوضة</div>
         </div>
       </div>
 
-      {/* Tabs */}
       <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'0.875rem',border:`1px solid ${B.border}`,width:'fit-content'}}>
         {[{v:'services',l:'📋 الخدمات'},{v:'bookings',l:'📅 الحجوزات'},{v:'calendar',l:'🗓️ كالندريي'}].map(t=>(
-          <button key={t.v} onClick={()=>setTab(t.v)} style={{padding:'0.4rem 1rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:tab===t.v?B.accent:'transparent',color:tab===t.v?'white':B.muted,transition:'all 0.15s'}}>{t.l}</button>
+          <button key={t.v} onClick={()=>setTab(t.v)} style={{padding:'0.4rem 0.875rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.82rem',background:tab===t.v?B.accent:'transparent',color:tab===t.v?'white':B.muted,transition:'all 0.15s'}}>{t.l}</button>
         ))}
       </div>
 
-      {/* Services list */}
       {tab==='services'&&(
         services.length===0
           ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش خدمات — زيد مثلاً "كراء استوديو بالساعة"</div>
@@ -1194,21 +1191,20 @@ function ServiceModule({data,addService,updService,delService}){
               const bkRev=(svc.bookings||[]).filter(b=>b.status==='done').reduce((s,b)=>s+Number(b.total||0),0);
               return(
                 <div key={svc.id} style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'1rem',display:'flex',alignItems:'center',gap:'0.75rem'}}>
-                  <div style={{width:46,height:46,borderRadius:'0.875rem',background:B.inputBg,display:'grid',placeItems:'center',fontSize:'1.4rem',flexShrink:0}}>{cat?.l.split(' ')[0]||'📦'}</div>
+                  <div style={{width:46,height:46,borderRadius:'0.875rem',background:B.inputBg,display:'grid',placeItems:'center',fontSize:'1.4rem',flexShrink:0}}>{(cat?.l||'📦').split(' ')[0]}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontWeight:'800',color:B.text,fontSize:'0.95rem'}}>{svc.name}</div>
                     <div style={{fontSize:'0.75rem',color:B.muted,display:'flex',gap:'0.625rem',flexWrap:'wrap',marginTop:'3px'}}>
-                      <span style={{color:B.accent,fontWeight:'700',fontVariantNumeric:'tabular-nums'}}>{fmt(svc.price)} دج {unit?.l}</span>
-                      <span>{cat?.l}</span>
+                      <span style={{color:B.accent,fontWeight:'700'}}>{fmt(svc.price)} دج {unit?.l}</span>
+                      {cat&&<span>{cat.l}</span>}
                       {bkCount>0&&<span style={{color:B.info}}>📅 {bkCount} حجز</span>}
                       {bkRev>0&&<span style={{color:B.success}}>💰 {fmt(bkRev)} دج</span>}
                     </div>
                     {svc.desc&&<div style={{fontSize:'0.75rem',color:B.muted,marginTop:'3px'}}>{svc.desc}</div>}
                   </div>
                   <div style={{display:'flex',gap:'0.25rem',flexShrink:0}}>
-                    <button onClick={()=>{setShowAddBook(true);}} style={{padding:'0.35rem 0.625rem',borderRadius:'0.5rem',border:`1px solid ${B.accent}44`,background:`${B.accent}10`,color:B.accent,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700'}}>+ حجز</button>
                     <button onClick={()=>{setEditSvc(svc);setShowAddSvc(true);}} style={{padding:'0.4rem',border:`1px solid ${B.border}`,background:'transparent',borderRadius:'0.5rem',cursor:'pointer',display:'flex'}}><Ic n="pencil" size={14}/></button>
-                    <button onClick={()=>delService(svc.id)} style={{padding:'0.4rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={14} color={B.danger}/></button>
+                    <button onClick={()=>delService(svc.id)} style={{padding:'0.4rem',border:'none',background:'none',borderRadius:'0.5rem',cursor:'pointer',display:'flex'}}><Ic n="trash" size={14} color={B.danger}/></button>
                   </div>
                 </div>
               );
@@ -1216,7 +1212,6 @@ function ServiceModule({data,addService,updService,delService}){
           </div>
       )}
 
-      {/* Bookings list */}
       {tab==='bookings'&&(
         allBookings.length===0
           ?<div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'3rem',textAlign:'center',color:B.muted,fontSize:'0.875rem'}}>ما كاينش حجوزات بعد</div>
@@ -1226,35 +1221,115 @@ function ServiceModule({data,addService,updService,delService}){
               return(
                 <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<allBookings.length-1?`1px solid ${B.border}`:'none'}}>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap',marginBottom:'3px'}}>
+                    <div style={{display:'flex',gap:'0.5rem',alignItems:'center',marginBottom:'3px'}}>
                       <span style={{fontWeight:'700',color:B.text,fontSize:'0.875rem'}}>{b.clientName||'—'}</span>
                       <Badge label={b.serviceName} color={B.info}/>
                     </div>
-                    <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem',flexWrap:'wrap'}}>
+                    <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem'}}>
                       <span>📅 {fmtD(b.date)}</span>
-                      {b.hours&&<span>⏱️ {b.hours} ساعة</span>}
-                      <span style={{color:B.accent,fontWeight:'600',fontVariantNumeric:'tabular-nums'}}>💰 {fmt(b.total)} دج</span>
+                      {b.hours&&<span>⏱️ {b.hours}س</span>}
+                      <span style={{color:B.accent,fontWeight:'600'}}>💰 {fmt(b.total)} دج</span>
                     </div>
-                    {b.notes&&<div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>{b.notes}</div>}
                   </div>
-                  <div style={{display:'flex',gap:'0.375rem',alignItems:'center',flexShrink:0}}>
-                    <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})}
-                      style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.72rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
-                      {BOOK_STATUS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}
-                    </select>
-                    <button onClick={()=>delBooking(b.serviceId,b.id)} style={{padding:'0.35rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={14} color={B.danger}/></button>
-                  </div>
+                  <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})}
+                    style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.72rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
+                    {BOOK_STATUS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}
+                  </select>
+                  <button onClick={()=>delBooking(b.serviceId,b.id)} style={{padding:'0.35rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={14} color={B.danger}/></button>
                 </div>
               );
             })}
           </div>
       )}
 
-      {/* Calendar view */}
-      {tab==='calendar'&&<BookingCalendar allBookings={allBookings} services={services} updBooking={updBooking} delBooking={delBooking}/>}
+      {tab==='calendar'&&<SvcCalendar allBookings={allBookings} services={services} updBooking={updBooking} delBooking={delBooking}/>}
 
       {showAddSvc&&<SvcForm initial={editSvc} onClose={()=>{setShowAddSvc(false);setEditSvc(null);}} onSave={s=>{if(editSvc)updService(editSvc.id,s);else addService({...s,bookings:[]});setShowAddSvc(false);setEditSvc(null);}}/>}
-      {showAddBook&&<BookingForm services={services} clients={data.clients} onClose={()=>setShowAddBook(false)} onSave={(serviceId,b)=>{addBooking(serviceId,b);setShowAddBook(false);}}/>}
+      {showAddBook&&services.length>0&&<BookingForm services={services} clients={data.clients||[]} onClose={()=>setShowAddBook(false)} onSave={(serviceId,b)=>{addBooking(serviceId,b);setShowAddBook(false);}}/>}
+    </div>
+  );
+}
+
+function SvcCalendar({allBookings,services,updBooking,delBooking}){
+  const[viewDate,setViewDate]=useState(()=>new Date());
+  const[selDay,setSelDay]=useState(null);
+  const[svcFilter,setSvcFilter]=useState('');
+  const filtered=svcFilter?allBookings.filter(b=>b.serviceId===svcFilter):allBookings;
+  const yr=viewDate.getFullYear();
+  const mo=viewDate.getMonth();
+  const firstDay=new Date(yr,mo,1);
+  const daysInMonth=new Date(yr,mo+1,0).getDate();
+  const startWd=firstDay.getDay();
+  const todayStr2=new Date().toISOString().slice(0,10);
+  const moLabel=firstDay.toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+  const byDate={};
+  filtered.forEach(b=>{if(b.date){const k=b.date.slice(0,10);if(!byDate[k])byDate[k]=[];byDate[k].push(b);}});
+  const dayKey=d=>`${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  const cells=[];
+  for(let i=0;i<startWd;i++)cells.push(null);
+  for(let d=1;d<=daysInMonth;d++)cells.push(d);
+  const selDayBks=selDay?(byDate[dayKey(selDay)]||[]):[];
+  const DAYS=['أحد','اثن','ثلا','أرب','خمس','جمع','سبت'];
+  const goM=d=>{const n=new Date(viewDate);n.setMonth(n.getMonth()+d);setViewDate(n);setSelDay(null);};
+
+  return(
+    <div style={{display:'flex',flexDirection:'column',gap:'0.875rem'}}>
+      {services.length>1&&(
+        <div style={{display:'flex',gap:'0.375rem',overflowX:'auto',paddingBottom:'2px'}}>
+          <button onClick={()=>setSvcFilter('')} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${!svcFilter?B.accent:B.border}`,background:!svcFilter?`${B.accent}15`:'transparent',color:!svcFilter?B.accent:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>الكل</button>
+          {services.map(s=>(<button key={s.id} onClick={()=>setSvcFilter(svcFilter===s.id?'':s.id)} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${svcFilter===s.id?B.accent:B.border}`,background:svcFilter===s.id?`${B.accent}15`:'transparent',color:svcFilter===s.id?B.accent:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>{s.name}</button>))}
+        </div>
+      )}
+      <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'1rem'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
+          <button onClick={()=>goM(-1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex'}}><Ic n="chevR" size={16}/></button>
+          <span style={{fontWeight:'800',color:B.text,fontSize:'1rem'}}>{moLabel}</span>
+          <button onClick={()=>goM(1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex'}}><Ic n="chevL" size={16}/></button>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'2px',marginBottom:'4px'}}>
+          {DAYS.map(w=><div key={w} style={{textAlign:'center',fontSize:'0.65rem',fontWeight:'700',color:B.muted,padding:'4px 0'}}>{w}</div>)}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'3px'}}>
+          {cells.map((d,i)=>{
+            if(d===null)return <div key={i}/>;
+            const key=dayKey(d);
+            const bks=byDate[key]||[];
+            const isTd=key===todayStr2;
+            const isSel=selDay===d;
+            return(
+              <button key={i} onClick={()=>setSelDay(isSel?null:d)}
+                style={{padding:'6px 2px',borderRadius:'0.5rem',border:isSel?`2px solid ${B.accent}`:isTd?`2px solid ${B.info}`:`1px solid ${B.border}`,background:isSel?`${B.accent}15`:bks.length>0?B.inputBg:'transparent',cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:'2px',minHeight:'42px'}}>
+                <span style={{fontSize:'0.78rem',fontWeight:isTd?'800':'600',color:isTd?B.info:B.text}}>{d}</span>
+                {bks.length>0&&<div style={{display:'flex',gap:'2px',flexWrap:'wrap',justifyContent:'center'}}>
+                  {bks.slice(0,3).map((b,bi)=>{const st=BOOK_STATUS.find(s=>s.id===b.status);return <div key={bi} style={{width:5,height:5,borderRadius:'50%',background:st?.c||B.muted}}/>;})}</div>}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{display:'flex',gap:'0.75rem',marginTop:'0.875rem',paddingTop:'0.75rem',borderTop:`1px solid ${B.border}`,flexWrap:'wrap'}}>
+          {BOOK_STATUS.map(s=>(<div key={s.id} style={{display:'flex',alignItems:'center',gap:'4px'}}><div style={{width:6,height:6,borderRadius:'50%',background:s.c}}/><span style={{fontSize:'0.68rem',color:B.muted}}>{s.l}</span></div>))}
+        </div>
+      </div>
+      {selDay&&(<div style={{background:B.card,border:`1px solid ${B.accent}33`,borderRadius:'1.25rem',padding:'1rem'}}>
+        <div style={{fontWeight:'800',color:B.text,fontSize:'0.9rem',marginBottom:'0.75rem'}}>📅 {selDay} {moLabel}</div>
+        {selDayBks.length===0
+          ?<div style={{fontSize:'0.8rem',color:B.muted,textAlign:'center',padding:'1rem'}}>ما كاينش حجوزات في هذا اليوم</div>
+          :<div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+            {selDayBks.map(b=>{const st=BOOK_STATUS.find(s=>s.id===b.status);return(
+              <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.625rem 0.75rem',background:B.inputBg,borderRadius:'0.75rem',borderRight:`3px solid ${st?.c||B.border}`}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}><span style={{fontWeight:'700',color:B.text,fontSize:'0.85rem'}}>{b.clientName}</span><Badge label={b.serviceName} color={B.info}/></div>
+                  <div style={{fontSize:'0.72rem',color:B.muted}}>{b.hours&&`⏱️ ${b.hours}س · `}<span style={{color:B.accent,fontWeight:'600'}}>💰 {fmt(b.total)} دج</span></div>
+                </div>
+                <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})} style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.7rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
+                  {BOOK_STATUS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}
+                </select>
+                <button onClick={()=>delBooking(b.serviceId,b.id)} style={{padding:'0.3rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={13} color={B.danger}/></button>
+              </div>
+            );})}
+          </div>
+        }
+      </div>)}
     </div>
   );
 }
@@ -1267,224 +1342,61 @@ function SvcForm({initial,onClose,onSave}){
       <Field label="اسم الخدمة"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="مثال: كراء استوديو A" style={INP} autoFocus/></Field>
       <Field label="الفئة">
         <div style={{display:'flex',gap:'0.375rem',flexWrap:'wrap'}}>
-          {SVC_CATS.map(c=>(
-            <button key={c.id} onClick={()=>setF({...f,cat:c.id})}
-              style={{padding:'0.375rem 0.75rem',borderRadius:'9999px',border:`1px solid ${f.cat===c.id?B.accent:B.border}`,background:f.cat===c.id?`${B.accent}15`:'transparent',color:f.cat===c.id?B.accent:B.muted,cursor:'pointer',fontSize:'0.78rem',fontWeight:'700'}}>
-              {c.l}
-            </button>
-          ))}
+          {SVC_CATS.map(c=>(<button key={c.id} onClick={()=>setF({...f,cat:c.id})} style={{padding:'0.375rem 0.75rem',borderRadius:'9999px',border:`1px solid ${f.cat===c.id?B.accent:B.border}`,background:f.cat===c.id?`${B.accent}15`:'transparent',color:f.cat===c.id?B.accent:B.muted,cursor:'pointer',fontSize:'0.78rem',fontWeight:'700'}}>{c.l}</button>))}
         </div>
       </Field>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
         <Field label="السعر (دج)"><input type="number" value={f.price} onChange={e=>setF({...f,price:e.target.value})} placeholder="0" style={INP}/></Field>
-        <Field label="وحدة التسعير">
-          <select value={f.unit} onChange={e=>setF({...f,unit:e.target.value})} style={INP}>
-            {SVC_UNITS.map(u=><option key={u.id} value={u.id}>{u.l}</option>)}
-          </select>
-        </Field>
+        <Field label="وحدة التسعير"><select value={f.unit} onChange={e=>setF({...f,unit:e.target.value})} style={INP}>{SVC_UNITS.map(u=><option key={u.id} value={u.id}>{u.l}</option>)}</select></Field>
       </div>
-      <Field label="وصف (اختياري)"><textarea value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} placeholder="تجهيزات، شروط الاستخدام..." style={{...INP,height:64,resize:'none'}}/></Field>
+      <Field label="وصف (اختياري)"><textarea value={f.desc} onChange={e=>setF({...f,desc:e.target.value})} placeholder="تجهيزات، شروط..." style={{...INP,height:60,resize:'none'}}/></Field>
       <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>{initial?'حفظ':'زيد'}</button>
     </div>
   </Modal>);
 }
 
-// ─── BOOKING CALENDAR ─────────────────────────────────────
-function BookingCalendar({allBookings,services,updBooking,delBooking}){
-  const[viewDate,setViewDate]=useState(new Date());
-  const[selDay,setSelDay]=useState(null);
-  const[svcFilter,setSvcFilter]=useState('');
-
-  const filteredBookings=svcFilter?allBookings.filter(b=>b.serviceId===svcFilter):allBookings;
-
-  const year=viewDate.getFullYear();
-  const month=viewDate.getMonth();
-  const firstDay=new Date(year,month,1);
-  const lastDay=new Date(year,month+1,0);
-  const daysInMonth=lastDay.getDate();
-  // Arabic week starts Sunday=0 but getDay() in JS: Sun=0...Sat=6. We want grid starting Sunday.
-  const startWeekday=firstDay.getDay();
-  const todayD=new Date();todayD.setHours(0,0,0,0);
-
-  const monthLabel=viewDate.toLocaleDateString('ar',{month:'long',year:'numeric'});
-
-  // Map date string -> bookings
-  const byDate={};
-  filteredBookings.forEach(b=>{
-    if(!b.date)return;
-    const key=b.date.slice(0,10);
-    if(!byDate[key])byDate[key]=[];
-    byDate[key].push(b);
-  });
-
-  const cells=[];
-  for(let i=0;i<startWeekday;i++)cells.push(null);
-  for(let d=1;d<=daysInMonth;d++)cells.push(d);
-
-  const goMonth=delta=>{const n=new Date(viewDate);n.setMonth(n.getMonth()+delta);setViewDate(n);};
-
-  const dayKey=d=>`${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-  const selDayBookings=selDay?byDate[dayKey(selDay)]||[]:[];
-
-  const WEEKDAYS=['أحد','اثنين','ثلاثاء','أربعاء','خميس','جمعة','سبت'];
-
-  return(
-    <div style={{display:'flex',flexDirection:'column',gap:'0.875rem'}}>
-      {/* Service filter */}
-      {services.length>1&&(
-        <div style={{display:'flex',gap:'0.375rem',overflowX:'auto',paddingBottom:'2px'}}>
-          <button onClick={()=>setSvcFilter('')} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${!svcFilter?B.accent:B.border}`,background:!svcFilter?`${B.accent}15`:'transparent',color:!svcFilter?B.accent:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>كل الخدمات</button>
-          {services.map(s=>(
-            <button key={s.id} onClick={()=>setSvcFilter(svcFilter===s.id?'':s.id)} style={{padding:'0.3rem 0.75rem',borderRadius:'9999px',border:`1px solid ${svcFilter===s.id?B.accent:B.border}`,background:svcFilter===s.id?`${B.accent}15`:'transparent',color:svcFilter===s.id?B.accent:B.muted,cursor:'pointer',fontSize:'0.75rem',fontWeight:'700',whiteSpace:'nowrap'}}>{s.name}</button>
-          ))}
-        </div>
-      )}
-
-      {/* Calendar card */}
-      <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'1rem',overflow:'hidden'}}>
-        {/* Month nav */}
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:'1rem'}}>
-          <button onClick={()=>goMonth(-1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevR" size={16}/></button>
-          <div style={{fontWeight:'800',color:B.text,fontSize:'1rem'}}>{monthLabel}</div>
-          <button onClick={()=>goMonth(1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevL" size={16}/></button>
-        </div>
-
-        {/* Weekday headers */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'2px',marginBottom:'4px'}}>
-          {WEEKDAYS.map(w=><div key={w} style={{textAlign:'center',fontSize:'0.68rem',fontWeight:'700',color:B.muted,padding:'4px 0'}}>{w}</div>)}
-        </div>
-
-        {/* Day grid */}
-        <div style={{display:'grid',gridTemplateColumns:'repeat(7,1fr)',gap:'3px'}}>
-          {cells.map((d,i)=>{
-            if(d===null)return <div key={i}/>;
-            const key=dayKey(d);
-            const dayBookings=byDate[key]||[];
-            const cellDate=new Date(year,month,d);
-            const isToday_=cellDate.getTime()===todayD.getTime();
-            const isSel=selDay===d;
-            const hasBooking=dayBookings.length>0;
-            const hasConfirmed=dayBookings.some(b=>b.status==='confirmed');
-            const hasPending=dayBookings.some(b=>b.status==='pending');
-
-            return(
-              <button key={i} onClick={()=>setSelDay(isSel?null:d)}
-                style={{
-                  aspectRatio:'1',minHeight:'42px',borderRadius:'0.625rem',border:isSel?`2px solid ${B.accent}`:isToday_?`2px solid ${B.info}`:`1px solid ${B.border}`,
-                  background:isSel?`${B.accent}15`:hasBooking?B.inputBg:'transparent',
-                  cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:'2px',padding:'2px',position:'relative'
-                }}>
-                <span style={{fontSize:'0.78rem',fontWeight:isToday_?'800':'600',color:isToday_?B.info:B.text}}>{d}</span>
-                {hasBooking&&(
-                  <div style={{display:'flex',gap:'2px'}}>
-                    {dayBookings.slice(0,3).map((b,bi)=>(
-                      <div key={bi} style={{width:5,height:5,borderRadius:'50%',background:b.status==='confirmed'?B.success:b.status==='pending'?B.warning:b.status==='done'?B.muted:B.danger}}/>
-                    ))}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Legend */}
-        <div style={{display:'flex',gap:'0.75rem',marginTop:'0.875rem',paddingTop:'0.75rem',borderTop:`1px solid ${B.border}`,flexWrap:'wrap'}}>
-          {BOOK_STATUS.map(s=>(
-            <div key={s.id} style={{display:'flex',alignItems:'center',gap:'4px'}}>
-              <div style={{width:6,height:6,borderRadius:'50%',background:s.c}}/>
-              <span style={{fontSize:'0.68rem',color:B.muted}}>{s.l}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Selected day bookings */}
-      {selDay&&(
-        <div style={{background:B.card,border:`1px solid ${B.accent}33`,borderRadius:'1.25rem',padding:'1rem'}}>
-          <div style={{fontWeight:'800',color:B.text,fontSize:'0.9rem',marginBottom:'0.75rem'}}>
-            📅 حجوزات {selDay} {monthLabel}
-          </div>
-          {selDayBookings.length===0
-            ?<div style={{fontSize:'0.8rem',color:B.muted,textAlign:'center',padding:'1rem'}}>ما كاينش حجوزات في هذا اليوم</div>
-            :<div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
-              {selDayBookings.map(b=>{
-                const st=BOOK_STATUS.find(s=>s.id===b.status);
-                return(
-                  <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.625rem 0.75rem',background:B.inputBg,borderRadius:'0.75rem',borderRight:`3px solid ${st?.c||B.border}`}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap'}}>
-                        <span style={{fontWeight:'700',color:B.text,fontSize:'0.85rem'}}>{b.clientName}</span>
-                        <Badge label={b.serviceName} color={B.info}/>
-                      </div>
-                      <div style={{fontSize:'0.72rem',color:B.muted,marginTop:'2px'}}>
-                        {b.hours&&<span>⏱️ {b.hours} ساعة · </span>}
-                        <span style={{color:B.accent,fontWeight:'600'}}>💰 {fmt(b.total)} دج</span>
-                      </div>
-                    </div>
-                    <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})}
-                      style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.7rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
-                      {BOOK_STATUS.map(s=><option key={s.id} value={s.id}>{s.l}</option>)}
-                    </select>
-                    <button onClick={()=>delBooking(b.serviceId,b.id)} style={{padding:'0.3rem',border:'none',background:'none',cursor:'pointer',display:'flex'}}><Ic n="trash" size={13} color={B.danger}/></button>
-                  </div>
-                );
-              })}
-            </div>
-          }
-        </div>
-      )}
-    </div>
-  );
-}
-
-
 function BookingForm({services,clients,onClose,onSave}){
-  const[f,setF]=useState({serviceId:services[0]?.id||'',clientName:'',date:todayStr(),hours:'',total:'',status:'confirmed',notes:''});
-  const svc=services.find(s=>s.id===f.serviceId);
+  const firstSvc=services[0];
+  const[svcId,setSvcId]=useState(firstSvc?.id||'');
+  const[clientName,setClientName]=useState('');
+  const[date,setDate]=useState(todayStr());
+  const[hours,setHours]=useState('');
+  const[total,setTotal]=useState('');
+  const[status,setStatus]=useState('confirmed');
+  const[notes,setNotes]=useState('');
+  const svc=services.find(s=>s.id===svcId);
   const unit=SVC_UNITS.find(u=>u.id===svc?.unit);
-  // Auto-calculate total when hours change
-  const calcTotal=h=>svc?.price&&h?Number(svc.price)*Number(h):f.total;
-  const save=()=>{if(!f.clientName.trim()||!f.date)return alert('دخل اسم الزبون والتاريخ');onSave(f.serviceId,{clientName:f.clientName,date:f.date,hours:f.hours,total:Number(f.total)||0,status:f.status,notes:f.notes});};
+  const calcTotal=h=>svc?.price&&h?String(Number(svc.price)*Number(h)):total;
+  const save=()=>{if(!clientName.trim()||!date)return alert('دخل اسم الزبون والتاريخ');onSave(svcId,{clientName,date,hours,total:Number(total)||0,status,notes});};
   return(<Modal onClose={onClose} title="حجز جديد">
     <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
       <Field label="الخدمة">
-        <select value={f.serviceId} onChange={e=>setF({...f,serviceId:e.target.value,total:''})} style={INP}>
+        <select value={svcId} onChange={e=>{setSvcId(e.target.value);setTotal('');}} style={INP}>
           {services.map(s=><option key={s.id} value={s.id}>{s.name} — {fmt(s.price)} دج {SVC_UNITS.find(u=>u.id===s.unit)?.l}</option>)}
         </select>
       </Field>
-      {svc&&<div style={{padding:'0.625rem 0.875rem',background:`${B.accent}10`,border:`1px solid ${B.accent}33`,borderRadius:'0.75rem',fontSize:'0.8rem',color:B.accent,fontWeight:'600'}}>
-        💰 {fmt(svc.price)} دج {unit?.l}
-      </div>}
-      <Field label="اسم الزبون / الزبون">
+      {svc&&<div style={{padding:'0.5rem 0.875rem',background:`${B.accent}10`,border:`1px solid ${B.accent}33`,borderRadius:'0.75rem',fontSize:'0.8rem',color:B.accent,fontWeight:'600'}}>💰 {fmt(svc.price)} دج {unit?.l}</div>}
+      <Field label="اسم الزبون">
         {clients.length>0
-          ?<select value={f.clientName} onChange={e=>setF({...f,clientName:e.target.value})} style={INP}>
-            <option value="">— اختار أو اكتب —</option>
+          ?<select value={clientName} onChange={e=>setClientName(e.target.value)} style={INP}>
+            <option value="">— اختار زبون —</option>
             {clients.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}
           </select>
-          :<input value={f.clientName} onChange={e=>setF({...f,clientName:e.target.value})} placeholder="اسم الزبون" style={INP} autoFocus/>
+          :<input value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="اسم الزبون" style={INP}/>
         }
       </Field>
-      {clients.length>0&&!f.clientName&&<input value={f.clientName} onChange={e=>setF({...f,clientName:e.target.value})} placeholder="أو اكتب اسم آخر" style={INP}/>}
+      {clients.length>0&&<input value={clientName} onChange={e=>setClientName(e.target.value)} placeholder="أو اكتب اسم آخر..." style={{...INP,fontSize:'0.82rem'}}/>}
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'0.75rem'}}>
-        <Field label="📅 التاريخ"><input type="date" value={f.date} onChange={e=>setF({...f,date:e.target.value})} style={INP}/></Field>
-        {(svc?.unit==='hour')&&<Field label="⏱️ عدد الساعات">
-          <input type="number" value={f.hours} onChange={e=>{const h=e.target.value;setF({...f,hours:h,total:calcTotal(h)});}} placeholder="0" style={INP}/>
-        </Field>}
+        <Field label="📅 التاريخ"><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={INP}/></Field>
+        {svc?.unit==='hour'&&<Field label="⏱️ عدد الساعات"><input type="number" value={hours} onChange={e=>{setHours(e.target.value);setTotal(calcTotal(e.target.value));}} placeholder="0" style={INP}/></Field>}
       </div>
-      <Field label="💰 المجموع (دج)">
-        <input type="number" value={f.total} onChange={e=>setF({...f,total:e.target.value})} placeholder="0 — يحتسب تلقائياً" style={INP}/>
-      </Field>
+      <Field label="💰 المجموع (دج)"><input type="number" value={total} onChange={e=>setTotal(e.target.value)} placeholder="يحتسب تلقائياً" style={INP}/></Field>
       <Field label="الحالة">
         <div style={{display:'flex',gap:'0.375rem',flexWrap:'wrap'}}>
-          {BOOK_STATUS.filter(s=>s.id!=='done').map(s=>(
-            <button key={s.id} onClick={()=>setF({...f,status:s.id})}
-              style={{flex:1,padding:'0.4rem',borderRadius:'0.75rem',border:`1px solid ${f.status===s.id?s.c:B.border}`,background:f.status===s.id?`${s.c}15`:'transparent',color:f.status===s.id?s.c:B.muted,cursor:'pointer',fontWeight:'700',fontSize:'0.78rem'}}>
-              {s.l}
-            </button>
-          ))}
+          {BOOK_STATUS.filter(s=>s.id!=='done').map(s=>(<button key={s.id} onClick={()=>setStatus(s.id)} style={{flex:1,padding:'0.4rem',borderRadius:'0.75rem',border:`1px solid ${status===s.id?s.c:B.border}`,background:status===s.id?`${s.c}15`:'transparent',color:status===s.id?s.c:B.muted,cursor:'pointer',fontWeight:'700',fontSize:'0.78rem'}}>{s.l}</button>))}
         </div>
       </Field>
-      <Field label="ملاحظات"><input value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="أي معلومات إضافية..." style={INP}/></Field>
+      <Field label="ملاحظات"><input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="أي معلومات..." style={INP}/></Field>
       <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>أضف الحجز</button>
     </div>
   </Modal>);
