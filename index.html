@@ -1221,9 +1221,13 @@ function ServiceModule({data,addService,updService,delService}){
               return(
                 <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<allBookings.length-1?`1px solid ${B.border}`:'none'}}>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:'flex',gap:'0.5rem',alignItems:'center',marginBottom:'3px'}}>
+                    <div style={{display:'flex',gap:'0.5rem',alignItems:'center',marginBottom:'3px',flexWrap:'wrap'}}>
                       <span style={{fontWeight:'700',color:B.text,fontSize:'0.875rem'}}>{b.clientName||'—'}</span>
                       <Badge label={b.serviceName} color={B.info}/>
+                      {b.memberName&&<span style={{display:'flex',alignItems:'center',gap:'4px',fontSize:'0.7rem',fontWeight:'700',color:B.muted}}>
+                        <Av name={b.memberName} color={(data.members||[]).find(m=>m.id===b.memberId)?.color||B.accent} size={18} fs={7}/>
+                        {b.memberName}
+                      </span>}
                     </div>
                     <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem'}}>
                       <span>📅 {fmtD(b.date)}</span>
@@ -1245,7 +1249,7 @@ function ServiceModule({data,addService,updService,delService}){
       {tab==='calendar'&&<SvcCalendar allBookings={allBookings} services={services} updBooking={updBooking} delBooking={delBooking}/>}
 
       {showAddSvc&&<SvcForm initial={editSvc} onClose={()=>{setShowAddSvc(false);setEditSvc(null);}} onSave={s=>{if(editSvc)updService(editSvc.id,s);else addService({...s,bookings:[]});setShowAddSvc(false);setEditSvc(null);}}/>}
-      {showAddBook&&services.length>0&&<BookingForm services={services} clients={data.clients||[]} onClose={()=>setShowAddBook(false)} onSave={(serviceId,b)=>{addBooking(serviceId,b);setShowAddBook(false);}}/>}
+      {showAddBook&&services.length>0&&<BookingForm services={services} clients={data.clients||[]} members={data.members||[]} onClose={()=>setShowAddBook(false)} onSave={(serviceId,b)=>{addBooking(serviceId,b);setShowAddBook(false);}}/>}
     </div>
   );
 }
@@ -1318,7 +1322,7 @@ function SvcCalendar({allBookings,services,updBooking,delBooking}){
             {selDayBks.map(b=>{const st=BOOK_STATUS.find(s=>s.id===b.status);return(
               <div key={b.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.625rem 0.75rem',background:B.inputBg,borderRadius:'0.75rem',borderRight:`3px solid ${st?.c||B.border}`}}>
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{display:'flex',gap:'0.5rem',alignItems:'center'}}><span style={{fontWeight:'700',color:B.text,fontSize:'0.85rem'}}>{b.clientName}</span><Badge label={b.serviceName} color={B.info}/></div>
+                  <div style={{display:'flex',gap:'0.5rem',alignItems:'center',flexWrap:'wrap'}}><span style={{fontWeight:'700',color:B.text,fontSize:'0.85rem'}}>{b.clientName}</span><Badge label={b.serviceName} color={B.info}/>{b.memberName&&<span style={{fontSize:'0.68rem',fontWeight:'700',color:B.muted}}>👤 {b.memberName}</span>}</div>
                   <div style={{fontSize:'0.72rem',color:B.muted}}>{b.hours&&`⏱️ ${b.hours}س · `}<span style={{color:B.accent,fontWeight:'600'}}>💰 {fmt(b.total)} دج</span></div>
                 </div>
                 <select value={b.status} onChange={e=>updBooking(b.serviceId,b.id,{status:e.target.value})} style={{...INP,width:'auto',padding:'0.3rem 0.5rem',fontSize:'0.7rem',borderRadius:'0.5rem',color:st?.c,fontWeight:'700'}}>
@@ -1355,7 +1359,7 @@ function SvcForm({initial,onClose,onSave}){
   </Modal>);
 }
 
-function BookingForm({services,clients,onClose,onSave}){
+function BookingForm({services,clients,members,onClose,onSave}){
   const firstSvc=services[0];
   const[svcId,setSvcId]=useState(firstSvc?.id||'');
   const[clientName,setClientName]=useState('');
@@ -1364,10 +1368,13 @@ function BookingForm({services,clients,onClose,onSave}){
   const[total,setTotal]=useState('');
   const[status,setStatus]=useState('confirmed');
   const[notes,setNotes]=useState('');
+  const[memberId,setMemberId]=useState('');
   const svc=services.find(s=>s.id===svcId);
   const unit=SVC_UNITS.find(u=>u.id===svc?.unit);
+  const team=members||[];
+  const assigned=team.find(m=>m.id===memberId);
   const calcTotal=h=>svc?.price&&h?String(Number(svc.price)*Number(h)):total;
-  const save=()=>{if(!clientName.trim()||!date)return alert('دخل اسم الزبون والتاريخ');onSave(svcId,{clientName,date,hours,total:Number(total)||0,status,notes});};
+  const save=()=>{if(!clientName.trim()||!date)return alert('دخل اسم الزبون والتاريخ');onSave(svcId,{clientName,date,hours,total:Number(total)||0,status,notes,memberId:memberId||null,memberName:assigned?.name||''});};
   return(<Modal onClose={onClose} title="حجز جديد">
     <div style={{display:'flex',flexDirection:'column',gap:'1rem'}}>
       <Field label="الخدمة">
@@ -1396,6 +1403,24 @@ function BookingForm({services,clients,onClose,onSave}){
           {BOOK_STATUS.filter(s=>s.id!=='done').map(s=>(<button key={s.id} onClick={()=>setStatus(s.id)} style={{flex:1,padding:'0.4rem',borderRadius:'0.75rem',border:`1px solid ${status===s.id?s.c:B.border}`,background:status===s.id?`${s.c}15`:'transparent',color:status===s.id?s.c:B.muted,cursor:'pointer',fontWeight:'700',fontSize:'0.78rem'}}>{s.l}</button>))}
         </div>
       </Field>
+      <Field label="👤 شكون يخدم (إيديتور / UGC)">
+        {team.length===0
+          ?<div style={{fontSize:'0.78rem',color:B.muted,padding:'0.5rem 0'}}>زيد أعضاء من تبويب الفريق أولاً</div>
+          :<div style={{display:'flex',flexDirection:'column',gap:'0.375rem'}}>
+            {team.map(m=>(
+              <label key={m.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.5rem 0.75rem',borderRadius:'0.75rem',background:memberId===m.id?`${m.color}15`:B.inputBg,border:`1px solid ${memberId===m.id?m.color:B.border}`,cursor:'pointer'}}>
+                <input type="radio" name="bkMember" checked={memberId===m.id} onChange={()=>setMemberId(m.id)} style={{width:15,height:15,accentColor:m.color}}/>
+                <Av name={m.name} color={m.color} size={26} fs={9}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:'0.85rem',fontWeight:'700',color:B.text}}>{m.name}</div>
+                  <div style={{fontSize:'0.68rem',color:B.muted}}>{ROLES.find(r=>r.id===m.role)?.l}</div>
+                </div>
+              </label>
+            ))}
+            {memberId&&<button onClick={()=>setMemberId('')} style={{padding:'0.35rem',borderRadius:'0.5rem',border:`1px solid ${B.border}`,background:'transparent',color:B.muted,cursor:'pointer',fontSize:'0.72rem',fontWeight:'600'}}>ألغِ التعيين</button>}
+          </div>
+        }
+      </Field>
       <Field label="ملاحظات"><input value={notes} onChange={e=>setNotes(e.target.value)} placeholder="أي معلومات..." style={INP}/></Field>
       <button onClick={save} style={{width:'100%',padding:'0.875rem',borderRadius:'0.75rem',background:B.accent,color:'white',fontWeight:'700',border:'none',cursor:'pointer'}}>أضف الحجز</button>
     </div>
@@ -1404,6 +1429,7 @@ function BookingForm({services,clients,onClose,onSave}){
 
 // ─── REPORTS MODULE ───────────────────────────────────────
 function ReportsModule({data}){
+  const[rtab,setRtab]=useState('finance');
   const[period,setPeriod]=useState('month');
   const now=new Date();
   const getStart=()=>{const d=new Date();if(period==='month'){d.setDate(1);d.setHours(0,0,0,0);}else if(period==='quarter'){d.setMonth(Math.floor(d.getMonth()/3)*3,1);d.setHours(0,0,0,0);}else{d.setMonth(0,1);d.setHours(0,0,0,0);}return d;};
@@ -1424,8 +1450,17 @@ function ReportsModule({data}){
   }).sort((a,b)=>b.done-a.done);
 
   return(<div style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
-    <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:'0.75rem'}}>
-      <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>التقارير</h2>
+    <h2 style={{fontWeight:'900',color:B.text,fontSize:'1.25rem'}}>التقارير</h2>
+    <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'0.875rem',border:`1px solid ${B.border}`,width:'fit-content'}}>
+      {[{v:'finance',l:'💰 مالية'},{v:'tasks',l:'📋 المهام الشهرية'}].map(t=>(
+        <button key={t.v} onClick={()=>setRtab(t.v)} style={{padding:'0.45rem 1rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:rtab===t.v?B.accent:'transparent',color:rtab===t.v?'white':B.muted,transition:'all 0.15s'}}>{t.l}</button>
+      ))}
+    </div>
+
+    {rtab==='tasks'&&<MonthlyTasksReport data={data}/>}
+
+    {rtab==='finance'&&(<>
+    <div style={{display:'flex',justifyContent:'flex-end'}}>
       <div style={{display:'flex',gap:'4px',background:B.card,padding:'3px',borderRadius:'0.875rem',border:`1px solid ${B.border}`}}>
         {[{v:'month',l:'الشهر'},{v:'quarter',l:'الربع'},{v:'year',l:'السنة'}].map(p=>(
           <button key={p.v} onClick={()=>setPeriod(p.v)} style={{padding:'0.4rem 0.875rem',borderRadius:'0.625rem',border:'none',cursor:'pointer',fontWeight:'700',fontSize:'0.85rem',background:period===p.v?B.accent:'transparent',color:period===p.v?'white':B.muted,transition:'all 0.15s'}}>{p.l}</button>
@@ -1463,6 +1498,201 @@ function ReportsModule({data}){
         </div>);}).sort((a,b)=>0)}
       </div>
     </div>)}
+    </>)}
+  </div>);
+}
+
+// ─── MONTHLY TASKS REPORT ─────────────────────────────────
+function MonthlyTasksReport({data}){
+  const now=new Date();
+  const[mo,setMo]=useState(now.getMonth());
+  const[yr,setYr]=useState(now.getFullYear());
+  const[expandClient,setExpandClient]=useState(null);
+
+  const inMonth=iso=>{if(!iso)return false;const d=new Date(iso);return d.getMonth()===mo&&d.getFullYear()===yr;};
+  // A task counts for the month if it was delivered/posted, using dueDate when set, else createdAt
+  const monthTasks=(data.tasks||[]).filter(t=>{
+    const ref=t.dueDate||t.createdAt;
+    return inMonth(ref);
+  });
+  const doneTasks=monthTasks.filter(t=>t.stage==='done'||t.stage==='post');
+  const activeTasks=monthTasks.filter(t=>t.stage!=='done'&&t.stage!=='post');
+  const lateTasks=monthTasks.filter(t=>t.stage!=='done'&&t.stage!=='post'&&isOverdue(t.dueDate));
+
+  const moLabel=new Date(yr,mo,1).toLocaleDateString('fr-FR',{month:'long',year:'numeric'});
+  const goM=d=>{let m=mo+d,y=yr;if(m<0){m=11;y--;}if(m>11){m=0;y++;}setMo(m);setYr(y);setExpandClient(null);};
+  const isCur=mo===now.getMonth()&&yr===now.getFullYear();
+
+  // By content type
+  const byType=CTYPES.map(c=>({...c,n:monthTasks.filter(t=>t.contentType===c.id).length})).filter(c=>c.n>0).sort((a,b)=>b.n-a.n);
+  // By client
+  const byClient=(data.clients||[]).map(c=>{
+    const ts=monthTasks.filter(t=>t.clientId===c.id);
+    return{...c,tasks:ts,total:ts.length,done:ts.filter(t=>t.stage==='done'||t.stage==='post').length};
+  }).filter(c=>c.total>0).sort((a,b)=>b.total-a.total);
+  // By member
+  const byMember=(data.members||[]).map(m=>{
+    const ts=monthTasks.filter(t=>(t.assignees||[]).includes(m.id));
+    const earned=(data.memberPayments||[]).filter(p=>p.memberId===m.id&&inMonth(p.createdAt)).reduce((s,p)=>s+Number(p.amount),0);
+    return{...m,total:ts.length,done:ts.filter(t=>t.stage==='done'||t.stage==='post').length,earned};
+  }).filter(m=>m.total>0||m.earned>0).sort((a,b)=>b.done-a.done);
+
+  const maxType=Math.max(1,...byType.map(t=>t.n));
+
+  return(<div style={{display:'flex',flexDirection:'column',gap:'1.25rem'}}>
+    {/* Month nav */}
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.625rem 0.875rem'}}>
+      <button onClick={()=>goM(-1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevR" size={15}/></button>
+      <div style={{display:'flex',alignItems:'center',gap:'0.5rem'}}>
+        <span style={{fontWeight:'800',color:B.text,fontSize:'0.95rem'}}>📅 {moLabel}</span>
+        {isCur&&<Badge label="الشهر الحالي" color={B.accent}/>}
+      </div>
+      <button onClick={()=>goM(1)} style={{padding:'0.4rem 0.625rem',borderRadius:'0.625rem',border:`1px solid ${B.border}`,background:'transparent',cursor:'pointer',display:'flex',color:B.muted}}><Ic n="chevL" size={15}/></button>
+    </div>
+
+    {/* KPIs */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:'0.625rem'}}>
+      {[
+        {l:'إجمالي المهام',v:monthTasks.length,c:B.info,ic:'📋'},
+        {l:'مكتملة',v:doneTasks.length,c:B.success,ic:'✅'},
+        {l:'قيد العمل',v:activeTasks.length,c:B.warning,ic:'⏳'},
+        {l:'متأخرة',v:lateTasks.length,c:B.danger,ic:'⚠️'},
+      ].map((s,i)=>(
+        <div key={i} style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'0.875rem',textAlign:'center'}}>
+          <div style={{fontSize:'1.1rem',marginBottom:'3px'}}>{s.ic}</div>
+          <div style={{fontSize:'1.6rem',fontWeight:'900',color:s.c,lineHeight:1}}>{s.v}</div>
+          <div style={{fontSize:'0.68rem',color:B.muted,marginTop:'4px'}}>{s.l}</div>
+        </div>
+      ))}
+    </div>
+
+    {monthTasks.length===0&&(
+      <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1.25rem',padding:'3rem',textAlign:'center'}}>
+        <div style={{fontSize:'2.5rem',marginBottom:'0.75rem'}}>📭</div>
+        <div style={{fontWeight:'700',color:B.text}}>ما كاينش مهام في {moLabel}</div>
+      </div>
+    )}
+
+    {/* By content type */}
+    {byType.length>0&&(
+      <div>
+        <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'0.75rem'}}>واش أنتجنا</div>
+        <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',padding:'1rem',display:'flex',flexDirection:'column',gap:'0.625rem'}}>
+          {byType.map(t=>(
+            <div key={t.id} style={{display:'flex',alignItems:'center',gap:'0.75rem'}}>
+              <span style={{fontSize:'1rem',width:'1.5rem',textAlign:'center'}}>{t.i}</span>
+              <span style={{fontSize:'0.82rem',fontWeight:'600',color:B.text,minWidth:'4.5rem'}}>{t.l}</span>
+              <div style={{flex:1,height:8,background:B.inputBg,borderRadius:4,overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${t.n/maxType*100}%`,background:B.accent,borderRadius:4,transition:'width .4s'}}/>
+              </div>
+              <span style={{fontWeight:'800',color:B.text,fontVariantNumeric:'tabular-nums',minWidth:'1.75rem',textAlign:'left'}}>{t.n}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {/* By client — expandable */}
+    {byClient.length>0&&(
+      <div>
+        <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'0.75rem'}}>حسب الزبون</div>
+        <div style={{display:'flex',flexDirection:'column',gap:'0.5rem'}}>
+          {byClient.map(c=>{
+            const open=expandClient===c.id;
+            return(
+              <div key={c.id} style={{background:B.card,border:`1px solid ${open?c.color||B.accent:B.border}`,borderRadius:'1rem',overflow:'hidden',borderRight:`4px solid ${c.color||B.accent}`}}>
+                <button onClick={()=>setExpandClient(open?null:c.id)}
+                  style={{width:'100%',display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',background:'transparent',border:'none',cursor:'pointer',textAlign:'right'}}>
+                  <div style={{width:34,height:34,borderRadius:'0.625rem',background:c.color||B.accent,display:'grid',placeItems:'center',fontWeight:'800',color:'white',flexShrink:0}}>{c.name.charAt(0)}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:'700',color:B.text,fontSize:'0.9rem'}}>{c.name}</div>
+                    <div style={{fontSize:'0.72rem',color:B.muted}}>{c.total} مهمة · {c.done} مكتملة</div>
+                  </div>
+                  <div style={{fontWeight:'900',fontSize:'1.05rem',color:c.color||B.accent}}>{c.total}</div>
+                  <span style={{color:B.muted,display:'flex',transform:open?'rotate(90deg)':'none',transition:'transform .2s'}}><Ic n="chevL" size={15}/></span>
+                </button>
+                {open&&(
+                  <div style={{padding:'0 1rem 0.875rem',display:'flex',flexDirection:'column',gap:'0.375rem'}}>
+                    {c.tasks.map(t=>{
+                      const st=TASK_STAGES.find(s=>s.id===t.stage);
+                      const ct=CTYPES.find(x=>x.id===t.contentType);
+                      const who=(data.members||[]).filter(m=>(t.assignees||[]).includes(m.id));
+                      return(
+                        <div key={t.id} style={{display:'flex',alignItems:'center',gap:'0.5rem',padding:'0.5rem 0.625rem',background:B.inputBg,borderRadius:'0.625rem'}}>
+                          <span style={{fontSize:'0.85rem'}}>{ct?.i||'📦'}</span>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:'0.8rem',fontWeight:'600',color:B.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.title}</div>
+                            <div style={{fontSize:'0.66rem',color:B.muted}}>{t.dueDate?fmtD(t.dueDate):fmtD(t.createdAt)}</div>
+                          </div>
+                          <div style={{display:'flex',gap:'-4px',flexShrink:0}}>
+                            {who.slice(0,3).map((m,i)=><div key={m.id} style={{marginRight:i>0?'-6px':'0'}}><Av name={m.name} color={m.color} size={20} fs={7}/></div>)}
+                          </div>
+                          <span style={{fontSize:'0.66rem',padding:'2px 7px',borderRadius:'9999px',background:`${st?.color||B.muted}18`,color:st?.color||B.muted,fontWeight:'700',whiteSpace:'nowrap'}}>{st?.icon} {st?.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
+
+    {/* By member */}
+    {byMember.length>0&&(
+      <div>
+        <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'0.75rem'}}>شكون خدم</div>
+        <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+          {byMember.map((m,i)=>(
+            <div key={m.id} style={{display:'flex',alignItems:'center',gap:'0.75rem',padding:'0.875rem 1rem',borderBottom:i<byMember.length-1?`1px solid ${B.border}`:'none'}}>
+              <Av name={m.name} color={m.color} size={36} fs={12}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontWeight:'700',color:B.text,fontSize:'0.875rem'}}>{m.name}</div>
+                <div style={{fontSize:'0.72rem',color:B.muted,display:'flex',gap:'0.5rem',flexWrap:'wrap',marginTop:'2px'}}>
+                  <span>{ROLES.find(r=>r.id===m.role)?.l}</span>
+                  <span style={{color:B.success}}>✅ {m.done}</span>
+                  <span>📋 {m.total}</span>
+                </div>
+              </div>
+              {m.earned>0&&<span style={{fontWeight:'800',color:B.accent,fontVariantNumeric:'tabular-nums',fontSize:'0.875rem'}}>{fmt(m.earned)} دج</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    {/* Full list */}
+    {monthTasks.length>0&&(
+      <div>
+        <div style={{fontWeight:'800',color:B.text,fontSize:'1rem',marginBottom:'0.75rem'}}>كل مهام {moLabel}</div>
+        <div style={{background:B.card,border:`1px solid ${B.border}`,borderRadius:'1rem',overflow:'hidden'}}>
+          {monthTasks.slice().sort((a,b)=>new Date(b.dueDate||b.createdAt)-new Date(a.dueDate||a.createdAt)).map((t,i,arr)=>{
+            const cl=(data.clients||[]).find(c=>c.id===t.clientId);
+            const st=TASK_STAGES.find(s=>s.id===t.stage);
+            const ct=CTYPES.find(x=>x.id===t.contentType);
+            const who=(data.members||[]).filter(m=>(t.assignees||[]).includes(m.id));
+            return(
+              <div key={t.id} style={{display:'flex',alignItems:'center',gap:'0.625rem',padding:'0.75rem 1rem',borderBottom:i<arr.length-1?`1px solid ${B.border}`:'none'}}>
+                <span style={{fontSize:'0.9rem',width:'1.25rem',textAlign:'center',flexShrink:0}}>{ct?.i||'📦'}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:'0.85rem',fontWeight:'600',color:B.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.title}</div>
+                  <div style={{fontSize:'0.68rem',color:B.muted,display:'flex',gap:'0.5rem',alignItems:'center'}}>
+                    {cl&&<span style={{color:cl.color||B.accent,fontWeight:'600'}}>{cl.name}</span>}
+                    <span>{t.dueDate?fmtD(t.dueDate):fmtD(t.createdAt)}</span>
+                  </div>
+                </div>
+                <div style={{display:'flex',gap:'-4px',flexShrink:0}}>
+                  {who.slice(0,3).map((m,ix)=><div key={m.id} style={{marginRight:ix>0?'-6px':'0'}}><Av name={m.name} color={m.color} size={22} fs={8}/></div>)}
+                </div>
+                <span style={{fontSize:'0.66rem',padding:'2px 7px',borderRadius:'9999px',background:`${st?.color||B.muted}18`,color:st?.color||B.muted,fontWeight:'700',whiteSpace:'nowrap',flexShrink:0}}>{st?.icon} {st?.label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    )}
   </div>);
 }
 
